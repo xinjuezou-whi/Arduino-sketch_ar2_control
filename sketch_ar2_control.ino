@@ -23,8 +23,18 @@ Changelog:
 
 #define MOVEIT 0
 
+const String VERSION = "00.03";
+
 // ROS
-ros::NodeHandle nh;
+ros::NodeHandle nh_;
+
+// control variables
+String pre_cmd_;
+unsigned long pre_ticks_ = 0;
+const int JOINT_NUM = 6;
+bool touched_[JOINT_NUM] = { false, false, false, false, false, false };
+enum STATE { STA_HOMING = 0, STA_SLAVE, STA_UNDEFINED };
+uint8_t state_ = STA_SLAVE;
 
 // SPEED // millisecond multiplier // raise value to slow robot speeds // DEFAULT = 200
 const int SpeedMult = 200;
@@ -70,12 +80,7 @@ const int J4calPin = 17;
 const int J5calPin = 18;
 const int J6calPin = 19;
 
-const int Input22 = 22;
-const int Input23 = 23;
-const int Input24 = 24;
-const int Input25 = 25;
-const int Input26 = 26;
-const int Input27 = 27;
+const int input_limits_[JOINT_NUM] = { 22, 23, 24, 25, 26, 27 };
 const int Input28 = 28;
 const int Input29 = 29;
 const int Input30 = 30;
@@ -103,8 +108,6 @@ const int Output50 = 50;
 const int Output51 = 51;
 const int Output52 = 52;
 const int Output53 = 53;
-
-String pre_cmd_;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //DRIVE MOTORS J
@@ -951,13 +954,14 @@ void driveMotorsJ(String inData)
   }
 }
 
-void messageCallback(const std_msgs::String& toggle_msg)
+void messageCallback(const std_msgs::String& Msg)
 {
-  digitalWrite(13, HIGH-digitalRead(13)); // blink the led
-  digitalWrite(53, HIGH-digitalRead(53));
-  
-  String cmd(toggle_msg.data);
-  if (cmd != pre_cmd_)
+  digitalWrite(53, HIGH-digitalRead(53)); // blink the led
+
+  String cmd(Msg.data);
+  state_ = cmd.substring(0, 2) == "hm" ? STA_HOMING : STA_SLAVE;
+
+  if (state_ == STA_SLAVE && cmd != pre_cmd_)
   {
     driveMotorsJ(cmd);
     
@@ -1002,12 +1006,10 @@ void setup()
   pinMode(J5calPin, INPUT_PULLUP);
   pinMode(J6calPin, INPUT_PULLUP);
 
-  pinMode(Input22, INPUT_PULLUP);
-  pinMode(Input23, INPUT_PULLUP);
-  pinMode(Input24, INPUT_PULLUP);
-  pinMode(Input25, INPUT_PULLUP);
-  pinMode(Input26, INPUT_PULLUP);
-  pinMode(Input27, INPUT_PULLUP);
+  for (int i = 0; i < JOINT_NUM; ++i)
+  {
+    pinMode(input_limits_[i], INPUT_PULLUP);
+  }
   pinMode(Input28, INPUT_PULLUP);
   pinMode(Input29, INPUT_PULLUP);
   pinMode(Input30, INPUT_PULLUP);
@@ -1055,15 +1057,39 @@ void setup()
 
 #if MOVEIT
   // init node
-  nh.initNode();
-  nh.subscribe(sub);
+  nh_.initNode();
+  nh_.subscribe(sub);
+#else
+  Serial.println("started up");
 #endif
 }
 
 void loop()
 {
 #if MOVEIT
-  nh.spinOnce();
+  switch (state_)
+  {
+  case STA_SLAVE:
+    break;
+  case STA_HOMING:
+    // check limit switches
+    // taking polling rather than interrupt is due to meager interrupt pins
+    auto now = millis();
+    if (now - pre_ticks > 100)
+    {
+      for (int i = 0; i < JOINT_NUM; ++i)
+      {
+        touched_[i] = digitalRead(input_limits_[i]);
+      }
+    
+      pre_ticks_ = now;
+    }
+    break;
+  default:
+    break;
+  }
+
+  nh_.spinOnce();
   delay(1);
 #else
   // for responding python control sw
@@ -1080,6 +1106,10 @@ void loop()
         Serial.print("command recieved");
         driveMotorsJ(inData);
         inData = ""; // Clear recieved buffer
+      }
+      else if (function == "hm")
+      {
+        
       }
     }
   }
