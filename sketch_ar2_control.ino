@@ -4,6 +4,7 @@ Stepper motor control
 Features:
 - step motor control
 - rosserial communication
+- homing mechanism
 - xxx
 
 Dependency:
@@ -16,943 +17,275 @@ All text above must be included in any redistribution.
 
 Changelog:
 2022-07-09: refactored from version AR2.0
+2022-08-02: added homing mechanism
 2022-xx-xx: xxx
 ******************************************************************/
 #include <ros.h>
 #include <std_msgs/String.h>
 
-#define MOVEIT 0
+#define MOVEIT 1
 
-const String VERSION = "00.03";
+const String VERSION = "00.05";
 
 // ROS
 ros::NodeHandle nh_;
 
 // control variables
+String recv_string_;
+std_msgs::String response_string_;
 String pre_cmd_;
-unsigned long pre_ticks_ = 0;
 const int JOINT_NUM = 6;
-bool touched_[JOINT_NUM] = { false, false, false, false, false, false };
-enum STATE { STA_HOMING = 0, STA_SLAVE, STA_UNDEFINED };
+enum STATE { STA_HOMING = 0, STA_HOMING_TURN, STA_SLAVE, STA_UNDEFINED };
 uint8_t state_ = STA_SLAVE;
 
 // SPEED // millisecond multiplier // raise value to slow robot speeds // DEFAULT = 200
-const int SpeedMult = 200;
+const int SPEED_MULTIPLE = 200;
+enum KINEMATICS { K_SPEED_IN = 0, K_ACC_DUR, K_ACC_SPD, K_DCC_DUR, K_DCC_SPD, K_SUM };
+int home_dirs_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+int home_steps_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+float home_kinematics_[K_SUM] = { 0.0, 0.0, 0.0, 0.0, 0.0 };
 
-/*
-  MOTOR DIRECTION - motor directions can be changed on the caibration page in the software but can also
-  be changed here: example using DM542T driver(CW) set to 1 - if using ST6600 or DM320T driver(CCW) set to 0
-  DEFAULT = 111011   */
+// MOTOR DIRECTION - motor directions can be changed on the caibration page in the software,
+// but can also be changed here: example using DM542T driver(CW) set to 1 - if using ST6600 or DM320T driver(CCW) set to 0
+// DEFAULT = 111011
+const int joint_rotation_dir_[JOINT_NUM] = { 1, 1, 1, 0, 1, 1 };
+const int joint_step_pin_[JOINT_NUM] = { 2, 4, 6, 8, 10, 12 };
+const int joint_dir_pin_[JOINT_NUM] = { 3, 5, 7, 9, 11, 13 };
+const int joint_limit_pin_[JOINT_NUM] = { 22, 23, 24, 25, 26, 27 };
+const int output_pin_53_ = 53;
 
-const int J1rotdir = 1;
-const int J2rotdir = 1;
-const int J3rotdir = 1;
-const int J4rotdir = 0;
-const int J5rotdir = 1;
-const int J6rotdir = 1;
-
-const int TRACKrotdir = 0;
-
-String inData;
-String function;
-char WayPt[101][50];
-int WayPtDel;
-
-const int J1stepPin = 2; // 3 for modified
-const int J1dirPin = 3; // 2 for modified
-const int J2stepPin = 4;
-const int J2dirPin = 5; // 2 for modified
-const int J3stepPin = 6;
-const int J3dirPin = 7;
-const int J4stepPin = 8;
-const int J4dirPin = 9;
-const int J5stepPin = 10;
-const int J5dirPin = 11;
-const int J6stepPin = 12;
-const int J6dirPin = 13;
-const int TRstepPin = 20;
-const int TRdirPin = 21;
-
-const int J1calPin = 14;
-const int J2calPin = 15;
-const int J3calPin = 16;
-const int J4calPin = 17;
-const int J5calPin = 18;
-const int J6calPin = 19;
-
-const int input_limits_[JOINT_NUM] = { 22, 23, 24, 25, 26, 27 };
-const int Input28 = 28;
-const int Input29 = 29;
-const int Input30 = 30;
-const int Input31 = 31;
-const int Input32 = 32;
-const int Input33 = 33;
-const int Input34 = 34;
-const int Input35 = 35;
-const int Input36 = 36;
-const int Input37 = 37;
-
-const int Output38 = 38;
-const int Output39 = 39;
-const int Output40 = 40;
-const int Output41 = 41;
-const int Output42 = 42;
-const int Output43 = 43;
-const int Output44 = 44;
-const int Output45 = 45;
-const int Output46 = 46;
-const int Output47 = 47;
-const int Output48 = 48;
-const int Output49 = 49;
-const int Output50 = 50;
-const int Output51 = 51;
-const int Output52 = 52;
-const int Output53 = 53;
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//DRIVE MOTORS J
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-void driveMotorsJ(String inData)
+void setDirection(int Pin, int RotDir, int Dir)
 {
-  int J1start = inData.indexOf('A');
-  int J2start = inData.indexOf('B');
-  int J3start = inData.indexOf('C');
-  int J4start = inData.indexOf('D');
-  int J5start = inData.indexOf('E');
-  int J6start = inData.indexOf('F');
-  int TRstart = inData.indexOf('T');
-  int Adstart = inData.indexOf('G');
-  int Asstart = inData.indexOf('H');
-  int Ddstart = inData.indexOf('I');
-  int Dsstart = inData.indexOf('K');
-  int SPstart = inData.indexOf('S');
-  int J1dir = inData.substring(J1start + 1, J1start + 2).toInt();
-  int J2dir = inData.substring(J2start + 1, J2start + 2).toInt();
-  int J3dir = inData.substring(J3start + 1, J3start + 2).toInt();
-  int J4dir = inData.substring(J4start + 1, J4start + 2).toInt();
-  int J5dir = inData.substring(J5start + 1, J5start + 2).toInt();
-  int J6dir = inData.substring(J6start + 1, J6start + 2).toInt();
-  int TRdir = inData.substring(TRstart + 1, TRstart + 2).toInt();
-  int J1step = inData.substring(J1start + 2, J2start).toInt();
-  int J2step = inData.substring(J2start + 2, J3start).toInt();
-  int J3step = inData.substring(J3start + 2, J4start).toInt();
-  int J4step = inData.substring(J4start + 2, J5start).toInt();
-  int J5step = inData.substring(J5start + 2, J6start).toInt();
-  int J6step = inData.substring(J6start + 2, TRstart).toInt();
-  int TRstep = inData.substring(TRstart + 2, SPstart).toInt();
-  float SpeedIn = inData.substring(SPstart + 1, Adstart).toFloat();
-  float ACCdur = inData.substring(Adstart + 1, Asstart).toInt();
-  float ACCspd = inData.substring(Asstart + 1, Ddstart).toInt();
-  float DCCdur = inData.substring(Ddstart + 1, Dsstart).toInt();
-  float DCCspd = inData.substring(Dsstart + 1).toInt();
+  if (Dir == 1 && RotDir == 1)
+  {
+    digitalWrite(Pin, LOW);
+  }
+  else if (Dir == 1 && RotDir == 0)
+  {
+    digitalWrite(Pin, HIGH);
+  }
+  else if (Dir == 0 && RotDir == 1)
+  {
+    digitalWrite(Pin, HIGH);
+  }
+  else if (Dir == 0 && RotDir == 0)
+  {
+    digitalWrite(Pin, LOW);
+  }
+}
+
+void parseKinematics(const String& Command, int* Jdir, int* Jstep, float* Kinematics)
+{
+  memset(Jdir, 0, sizeof(int) * JOINT_NUM);
+  int jStart[JOINT_NUM];
+  for (int i = 0; i < JOINT_NUM; ++i)
+  {
+    jStart[i] = Command.indexOf(65 + i);
+    Jdir[i] = Command.substring(jStart[i] + 1, jStart[i] + 2).toInt();
+  }
+
+  int spStart = Command.indexOf('S');
+  int adStart = Command.indexOf('G');
+  int asStart = Command.indexOf('H');
+  int ddStart = Command.indexOf('I');
+  int dsStart = Command.indexOf('K');
+
+  memset(Jstep, 0, sizeof(int) * JOINT_NUM);
+  for (int i = 0; i < JOINT_NUM; ++i)
+  {
+    if (jStart[i] > 0)
+    {
+      int endPos = jStart[i + 1] < 0 || (i == JOINT_NUM - 1) ? spStart : jStart[i + 1]; 
+      Jstep[i] = Command.substring(jStart[i] + 2, endPos).toInt();
+//      Serial.print("start ");
+//      Serial.print(jStart[i]);
+//      Serial.print(" end ");
+//      Serial.println(endPos);
+//      Serial.println(Command.substring(jStart[i] + 2, endPos).toInt());
+//      Serial.println(Jstep[i]);
+    }
+  }
+  
+  Kinematics[K_SPEED_IN] = Command.substring(spStart + 1, adStart).toFloat();
+  Kinematics[K_ACC_DUR] = Command.substring(adStart + 1, asStart).toFloat();
+  Kinematics[K_ACC_SPD] = Command.substring(asStart + 1, ddStart).toFloat();
+  Kinematics[K_DCC_DUR] = Command.substring(ddStart + 1, dsStart).toFloat();
+  Kinematics[K_DCC_SPD] = Command.substring(dsStart + 1).toFloat();
+}
+
+// DRIVE MOTORS J
+void driveMotorsJ(const String& Command)
+{
+  int jDir[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+  int jStep[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+  float kinematics[K_SUM] = { 0.0, 0.0, 0.0, 0.0, 0.0 };
+  parseKinematics(Command, jDir, jStep, kinematics);
 
   // FIND HIGHEST STEP
-  int HighStep = J1step;
-  if (J2step > HighStep)
+  int highStep = 0;
+  for (int i = 0; i < JOINT_NUM; ++i)
   {
-    HighStep = J2step;
-  }
-  if (J3step > HighStep)
-  {
-    HighStep = J3step;
-  }
-  if (J4step > HighStep)
-  {
-    HighStep = J4step;
-  }
-  if (J5step > HighStep)
-  {
-    HighStep = J5step;
-  }
-  if (J6step > HighStep)
-  {
-    HighStep = J6step;
-  }
-  if (TRstep > HighStep)
-  {
-    HighStep = TRstep;
+    if (jStep[i] > highStep)
+    {
+      highStep = jStep[i];
+    }
   }
 
   // FIND ACTIVE JOINTS
-  int J1active = 0;
-  int J2active = 0;
-  int J3active = 0;
-  int J4active = 0;
-  int J5active = 0;
-  int J6active = 0;
-  int TRactive = 0;
-  int Jactive = 0;
-
-  if (J1step >= 1)
+  int jActive = 0;
+  for (int i = 0; i < JOINT_NUM; ++i)
   {
-    J1active = 1;
+    jActive += jStep[i] >= 1 ? 1 : 0;
   }
-  if (J2step >= 1)
-  {
-    J2active = 1;
-  }
-  if (J3step >= 1)
-  {
-    J3active = 1;
-  }
-  if (J4step >= 1)
-  {
-    J4active = 1;
-  }
-  if (J5step >= 1)
-  {
-    J5active = 1;
-  }
-  if (J6step >= 1)
-  {
-    J6active = 1;
-  }
-  if (TRstep >= 1)
-  {
-    TRactive = 1;
-  }
-  Jactive = (J1active + J2active + J3active + J4active + J5active + J6active + TRactive);
 
-  int J1_PE = 0;
-  int J2_PE = 0;
-  int J3_PE = 0;
-  int J4_PE = 0;
-  int J5_PE = 0;
-  int J6_PE = 0;
-  int TR_PE = 0;
-
-  int J1_SE_1 = 0;
-  int J2_SE_1 = 0;
-  int J3_SE_1 = 0;
-  int J4_SE_1 = 0;
-  int J5_SE_1 = 0;
-  int J6_SE_1 = 0;
-  int TR_SE_1 = 0;
-
-  int J1_SE_2 = 0;
-  int J2_SE_2 = 0;
-  int J3_SE_2 = 0;
-  int J4_SE_2 = 0;
-  int J5_SE_2 = 0;
-  int J6_SE_2 = 0;
-  int TR_SE_2 = 0;
-
-  int J1_LO_1 = 0;
-  int J2_LO_1 = 0;
-  int J3_LO_1 = 0;
-  int J4_LO_1 = 0;
-  int J5_LO_1 = 0;
-  int J6_LO_1 = 0;
-  int TR_LO_1 = 0;
-
-  int J1_LO_2 = 0;
-  int J2_LO_2 = 0;
-  int J3_LO_2 = 0;
-  int J4_LO_2 = 0;
-  int J5_LO_2 = 0;
-  int J6_LO_2 = 0;
-  int TR_LO_2 = 0;
-
-  //reset
-  int J1cur = 0;
-  int J2cur = 0;
-  int J3cur = 0;
-  int J4cur = 0;
-  int J5cur = 0;
-  int J6cur = 0;
-  int TRcur = 0;
-
-  int J1_PEcur = 0;
-  int J2_PEcur = 0;
-  int J3_PEcur = 0;
-  int J4_PEcur = 0;
-  int J5_PEcur = 0;
-  int J6_PEcur = 0;
-  int TR_PEcur = 0;
-
-  int J1_SE_1cur = 0;
-  int J2_SE_1cur = 0;
-  int J3_SE_1cur = 0;
-  int J4_SE_1cur = 0;
-  int J5_SE_1cur = 0;
-  int J6_SE_1cur = 0;
-  int TR_SE_1cur = 0;
-
-  int J1_SE_2cur = 0;
-  int J2_SE_2cur = 0;
-  int J3_SE_2cur = 0;
-  int J4_SE_2cur = 0;
-  int J5_SE_2cur = 0;
-  int J6_SE_2cur = 0;
-  int TR_SE_2cur = 0;
-
+  int jPE[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+  int jSE_1[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+  int jSE_2[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+  int jLO_1[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+  int jLO_2[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+  
+  // reset
+  int jCur[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+  int jPEcur[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+  int jSE_1cur[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+  int jSE_2cur[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+  
   int highStepCur = 0;
-  float curDelay = 0;
+  float curDelay = 0.0;
 
-
-  //SET DIRECTIONS
-
-  /////// J1 /////////
-  if (J1dir == 1 && J1rotdir == 1)
+  // SET DIRECTIONS
+  for (int i = 0; i < JOINT_NUM; ++i)
   {
-    digitalWrite(J1dirPin, LOW);
-  }
-  else if (J1dir == 1 && J1rotdir == 0)
-  {
-    digitalWrite(J1dirPin, HIGH);
-  }
-  else if (J1dir == 0 && J1rotdir == 1)
-  {
-    digitalWrite(J1dirPin, HIGH);
-  }
-  else if (J1dir == 0 && J1rotdir == 0)
-  {
-    digitalWrite(J1dirPin, LOW);
+    setDirection(joint_dir_pin_[i], joint_rotation_dir_[i], jDir[i]);
   }
 
-  /////// J2 /////////
-  if (J2dir == 1 && J2rotdir == 1)
-  {
-    digitalWrite(J2dirPin, LOW);
-  }
-  else if (J2dir == 1 && J2rotdir == 0)
-  {
-    digitalWrite(J2dirPin, HIGH);
-  }
-  else if (J2dir == 0 && J2rotdir == 1)
-  {
-    digitalWrite(J2dirPin, HIGH);
-  }
-  else if (J2dir == 0 && J2rotdir == 0)
-  {
-    digitalWrite(J2dirPin, LOW);
-  }
-
-  /////// J3 /////////
-  if (J3dir == 1 && J3rotdir == 1)
-  {
-    digitalWrite(J3dirPin, LOW);
-  }
-  else if (J3dir == 1 && J3rotdir == 0)
-  {
-    digitalWrite(J3dirPin, HIGH);
-  }
-  else if (J3dir == 0 && J3rotdir == 1)
-  {
-    digitalWrite(J3dirPin, HIGH);
-  }
-  else if (J3dir == 0 && J3rotdir == 0)
-  {
-    digitalWrite(J3dirPin, LOW);
-  }
-
-  /////// J4 /////////
-  if (J4dir == 1 && J4rotdir == 1)
-  {
-    digitalWrite(J4dirPin, LOW);
-  }
-  else if (J4dir == 1 && J4rotdir == 0)
-  {
-    digitalWrite(J4dirPin, HIGH);
-  }
-  else if (J4dir == 0 && J4rotdir == 1)
-  {
-    digitalWrite(J4dirPin, HIGH);
-  }
-  else if (J4dir == 0 && J4rotdir == 0)
-  {
-    digitalWrite(J4dirPin, LOW);
-  }
-
-  /////// J5 /////////
-  if (J5dir == 1 && J5rotdir == 1)
-  {
-    digitalWrite(J5dirPin, LOW);
-  }
-  else if (J5dir == 1 && J5rotdir == 0)
-  {
-    digitalWrite(J5dirPin, HIGH);
-  }
-  else if (J5dir == 0 && J5rotdir == 1)
-  {
-    digitalWrite(J5dirPin, HIGH);
-  }
-  else if (J5dir == 0 && J5rotdir == 0)
-  {
-    digitalWrite(J5dirPin, LOW);
-  }
-
-  /////// J6 /////////
-  if (J6dir == 1 && J6rotdir == 1)
-  {
-    digitalWrite(J6dirPin, LOW);
-  }
-  else if (J6dir == 1 && J6rotdir == 0)
-  {
-    digitalWrite(J6dirPin, HIGH);
-  }
-  else if (J6dir == 0 && J6rotdir == 1)
-  {
-    digitalWrite(J6dirPin, HIGH);
-  }
-  else if (J6dir == 0 && J6rotdir == 0)
-  {
-    digitalWrite(J6dirPin, LOW);
-  }
-
-  /////// TRACK /////////
-  if (TRdir == 1 && TRACKrotdir == 1)
-  {
-    digitalWrite(TRdirPin, LOW);
-  }
-  else if (TRdir == 1 && TRACKrotdir == 0)
-  {
-    digitalWrite(TRdirPin, HIGH);
-  }
-  else if (TRdir == 0 && TRACKrotdir == 1)
-  {
-    digitalWrite(TRdirPin, HIGH);
-  }
-  else if (TRdir == 0 && TRACKrotdir == 0)
-  {
-    digitalWrite(TRdirPin, LOW);
-  }
-
-  /////CALC SPEEDS//////
-  float ACCStep = (HighStep * (ACCdur / 100));
-  float DCCStep = HighStep - (HighStep * (DCCdur / 100));
-  float AdjSpeed = (SpeedIn / 100);
+  ///// CALC SPEEDS //////
+  float accStep = (highStep * (kinematics[K_ACC_DUR] / 100));
+  float dccStep = highStep - (highStep * (kinematics[K_DCC_DUR] / 100));
+  float speedRatio = kinematics[K_SPEED_IN] / 100.0;
   // REG SPEED
-  float CalcRegSpeed = (SpeedMult / AdjSpeed);
-  int REGSpeed = int(CalcRegSpeed);
+  int regSpeed = int(SPEED_MULTIPLE / speedRatio);
 
   // ACC SPEED
-  float ACCspdT = (ACCspd / 100);
-  float CalcACCSpeed = ((SpeedMult + (SpeedMult / ACCspdT)) / AdjSpeed);
-  float ACCSpeed = (CalcACCSpeed);
-  float ACCinc = (REGSpeed - ACCSpeed) / ACCStep;
+  float accSpdT = kinematics[K_ACC_SPD] / 100.0;
+  float accSpeed = ((SPEED_MULTIPLE + (SPEED_MULTIPLE / accSpdT)) / speedRatio);
+  float accInc = (regSpeed - accSpeed) / accStep;
 
   // DCC SPEED
-  float DCCspdT = (DCCspd / 100);
-  float CalcDCCSpeed = ((SpeedMult + (SpeedMult / DCCspdT)) / AdjSpeed);
-  float DCCSpeed = (CalcDCCSpeed);
-  float DCCinc = (REGSpeed + DCCSpeed) / DCCStep;
-  DCCSpeed = REGSpeed;
+  float dccSpdT = kinematics[K_DCC_DUR] / 100.0;
+  float dccSpeed = ((SPEED_MULTIPLE + (SPEED_MULTIPLE / dccSpdT)) / speedRatio);
+  float dccInc = (regSpeed + dccSpeed) / dccStep;
+  dccSpeed = regSpeed;
 
   ///// DRIVE MOTORS /////
-  while (J1cur < J1step || J2cur < J2step || J3cur < J3step || J4cur < J4step || J5cur < J5step || J6cur < J6step || TRcur < TRstep)
-  {
-
-    ////DELAY CALC/////
-    if (highStepCur <= ACCStep)
+  while (jCur[0] < jStep[0] || jCur[1] < jStep[1] || jCur[2] < jStep[2] || jCur[3] < jStep[3] || jCur[4] < jStep[4] || jCur[5] < jStep[5])
+  {    
+    //// DELAY CALC /////
+    if (highStepCur <= accStep)
     {
-      curDelay = (ACCSpeed / Jactive);
-      ACCSpeed = ACCSpeed + ACCinc;
+      curDelay = accSpeed / jActive;
+      accSpeed = accSpeed + accInc;
     }
-    else if (highStepCur >= DCCStep)
+    else if (highStepCur >= dccStep)
     {
-      curDelay = (DCCSpeed / Jactive);
-      DCCSpeed = DCCSpeed + DCCinc;
+      curDelay = dccSpeed / jActive;
+      dccSpeed = dccSpeed + dccInc;
     }
     else
     {
-      curDelay = (REGSpeed / Jactive);
+      curDelay = regSpeed / jActive;
     }
 
-    /////// J1 ////////////////////////////////
-    ///find pulse every
-    if (J1cur < J1step)
+    // joint pulse
+    for (int i = 0; i < JOINT_NUM; ++i)
     {
-      J1_PE = (HighStep / J1step);
-      ///find left over 1
-      J1_LO_1 = (HighStep - (J1step * J1_PE));
-      ///find skip 1
-      if (J1_LO_1 > 0)
+      /// find pulse every
+      if (state_ != STA_HOMING_TURN && digitalRead(joint_limit_pin_[i]) == LOW)
       {
-        J1_SE_1 = (HighStep / J1_LO_1);
+        digitalWrite(joint_step_pin_[i], HIGH);
+        jCur[i] = jStep[i];
+#ifdef DEBUG
+        Serial.println("limit triggered");
+#endif
       }
       else
       {
-        J1_SE_1 = 0;
-      }
-      ///find left over 2
-      if (J1_SE_1 > 0)
-      {
-        J1_LO_2 = HighStep - ((J1step * J1_PE) + ((J1step * J1_PE) / J1_SE_1));
-      }
-      else
-      {
-        J1_LO_2 = 0;
-      }
-      ///find skip 2
-      if (J1_LO_2 > 0)
-      {
-        J1_SE_2 = (HighStep / J1_LO_2);
-      }
-      else
-      {
-        J1_SE_2 = 0;
-      }
-      /////////  J1  ///////////////
-      if (J1_SE_2 == 0)
-      {
-        J1_SE_2cur = (J1_SE_2 + 1);
-      }
-      if (J1_SE_2cur != J1_SE_2)
-      {
-        J1_SE_2cur = ++J1_SE_2cur;
-        if (J1_SE_1 == 0)
+        if (jCur[i] < jStep[i])
         {
-          J1_SE_1cur = (J1_SE_1 + 1);
-        }
-        if (J1_SE_1cur != J1_SE_1)
-        {
-          J1_SE_1cur = ++J1_SE_1cur;
-          J1_PEcur = ++J1_PEcur;
-          if (J1_PEcur == J1_PE)
+          jPE[i] = highStep / jStep[i];
+          /// find left over 1
+          jLO_1[i] = (highStep - (jStep[i] * jPE[i]));
+          /// find skip 1
+          if (jLO_1[i] > 0)
           {
-            J1cur = ++J1cur;
-            J1_PEcur = 0;
-            digitalWrite(J1stepPin, LOW);
-            delayMicroseconds(curDelay);
-            digitalWrite(J1stepPin, HIGH);
+            jSE_1[i] = highStep / jLO_1[i];
           }
-        }
-        else
-        {
-          J1_SE_1cur = 0;
-        }
-      }
-      else
-      {
-        J1_SE_2cur = 0;
+          else
+          {
+            jSE_1[i] = 0;
+          }
+          /// find left over 2
+          if (jSE_1[i] > 0)
+          {
+            jLO_2[i] = highStep - ((jStep[i] * jPE[i]) + ((jStep[i] * jPE[i]) / jSE_1[i]));
+          }
+          else
+          {
+            jLO_2[i] = 0;
+          }
+          /// find skip 2
+          if (jLO_2[i] > 0)
+          {
+            jSE_2[i] = highStep / jLO_2[i];
+          }
+          else
+          {
+            jSE_2[i] = 0;
+          }
+          /// joint
+          if (jSE_2[i] == 0)
+          {
+            jSE_2cur[i] = jSE_2[i] + 1;
+          }
+          if (jSE_2cur[i] != jSE_2[i])
+          {
+            ++jSE_2cur[i];
+            if (jSE_1[i] == 0)
+            {
+              jSE_1cur[i] = jSE_1[i] + 1;
+            }
+            if (jSE_1cur[i] != jSE_1[i])
+            {
+              ++jSE_1cur[i];
+              ++jPEcur[i];
+              if (jPEcur[i] == jPE[i])
+              {
+                ++jCur[i];
+                jPEcur[i] = 0;
+                digitalWrite(joint_step_pin_[i], LOW);
+                delayMicroseconds(curDelay);
+                digitalWrite(joint_step_pin_[i], HIGH);
+              }
+            }
+            else
+            {
+              jSE_1cur[i] = 0;
+            }
+          }
+          else
+          {
+            jSE_2cur[i] = 0;
+          }
+        }        
       }
     }
 
-    /////// J2 ////////////////////////////////
-    ///find pulse every
-    if (J2cur < J2step)
-    {
-      J2_PE = (HighStep / J2step);
-      ///find left over 1
-      J2_LO_1 = (HighStep - (J2step * J2_PE));
-      ///find skip 1
-      if (J2_LO_1 > 0)
-      {
-        J2_SE_1 = (HighStep / J2_LO_1);
-      }
-      else
-      {
-        J2_SE_1 = 0;
-      }
-      ///find left over 2
-      if (J2_SE_1 > 0)
-      {
-        J2_LO_2 = HighStep - ((J2step * J2_PE) + ((J2step * J2_PE) / J2_SE_1));
-      }
-      else
-      {
-        J2_LO_2 = 0;
-      }
-      ///find skip 2
-      if (J2_LO_2 > 0)
-      {
-        J2_SE_2 = (HighStep / J2_LO_2);
-      }
-      else
-      {
-        J2_SE_2 = 0;
-      }
-      /////////  J2  ///////////////
-      if (J2_SE_2 == 0)
-      {
-        J2_SE_2cur = (J2_SE_2 + 1);
-      }
-      if (J2_SE_2cur != J2_SE_2)
-      {
-        J2_SE_2cur = ++J2_SE_2cur;
-        if (J2_SE_1 == 0)
-        {
-          J2_SE_1cur = (J2_SE_1 + 1);
-        }
-        if (J2_SE_1cur != J2_SE_1)
-        {
-          J2_SE_1cur = ++J2_SE_1cur;
-          J2_PEcur = ++J2_PEcur;
-          if (J2_PEcur == J2_PE)
-          {
-            J2cur = ++J2cur;
-            J2_PEcur = 0;
-            digitalWrite(J2stepPin, LOW);
-            delayMicroseconds(curDelay);
-            digitalWrite(J2stepPin, HIGH);
-          }
-        }
-        else
-        {
-          J2_SE_1cur = 0;
-        }
-      }
-      else
-      {
-        J2_SE_2cur = 0;
-      }
-    }
-
-    /////// J3 ////////////////////////////////
-    ///find pulse every
-    if (J3cur < J3step)
-    {
-      J3_PE = (HighStep / J3step);
-      ///find left over 1
-      J3_LO_1 = (HighStep - (J3step * J3_PE));
-      ///find skip 1
-      if (J3_LO_1 > 0)
-      {
-        J3_SE_1 = (HighStep / J3_LO_1);
-      }
-      else
-      {
-        J3_SE_1 = 0;
-      }
-      ///find left over 2
-      if (J3_SE_1 > 0)
-      {
-        J3_LO_2 = HighStep - ((J3step * J3_PE) + ((J3step * J3_PE) / J3_SE_1));
-      }
-      else
-      {
-        J3_LO_2 = 0;
-      }
-      ///find skip 2
-      if (J3_LO_2 > 0)
-      {
-        J3_SE_2 = (HighStep / J3_LO_2);
-      }
-      else
-      {
-        J3_SE_2 = 0;
-      }
-      /////////  J3  ///////////////
-      if (J3_SE_2 == 0)
-      {
-        J3_SE_2cur = (J3_SE_2 + 1);
-      }
-      if (J3_SE_2cur != J3_SE_2)
-      {
-        J3_SE_2cur = ++J3_SE_2cur;
-        if (J3_SE_1 == 0)
-        {
-          J3_SE_1cur = (J3_SE_1 + 1);
-        }
-        if (J3_SE_1cur != J3_SE_1)
-        {
-          J3_SE_1cur = ++J3_SE_1cur;
-          J3_PEcur = ++J3_PEcur;
-          if (J3_PEcur == J3_PE)
-          {
-            J3cur = ++J3cur;
-            J3_PEcur = 0;
-            digitalWrite(J3stepPin, LOW);
-            delayMicroseconds(curDelay);
-            digitalWrite(J3stepPin, HIGH);
-          }
-        }
-        else
-        {
-          J3_SE_1cur = 0;
-        }
-      }
-      else
-      {
-        J3_SE_2cur = 0;
-      }
-    }
-
-    /////// J4 ////////////////////////////////
-    ///find pulse every
-    if (J4cur < J4step)
-    {
-      J4_PE = (HighStep / J4step);
-      ///find left over 1
-      J4_LO_1 = (HighStep - (J4step * J4_PE));
-      ///find skip 1
-      if (J4_LO_1 > 0)
-      {
-        J4_SE_1 = (HighStep / J4_LO_1);
-      }
-      else
-      {
-        J4_SE_1 = 0;
-      }
-      ///find left over 2
-      if (J4_SE_1 > 0)
-      {
-        J4_LO_2 = HighStep - ((J4step * J4_PE) + ((J4step * J4_PE) / J4_SE_1));
-      }
-      else
-      {
-        J4_LO_2 = 0;
-      }
-      ///find skip 2
-      if (J4_LO_2 > 0)
-      {
-        J4_SE_2 = (HighStep / J4_LO_2);
-      }
-      else
-      {
-        J4_SE_2 = 0;
-      }
-      /////////  J4  ///////////////
-      if (J4_SE_2 == 0)
-      {
-        J4_SE_2cur = (J4_SE_2 + 1);
-      }
-      if (J4_SE_2cur != J4_SE_2)
-      {
-        J4_SE_2cur = ++J4_SE_2cur;
-        if (J4_SE_1 == 0)
-        {
-          J4_SE_1cur = (J4_SE_1 + 1);
-        }
-        if (J4_SE_1cur != J4_SE_1)
-        {
-          J4_SE_1cur = ++J4_SE_1cur;
-          J4_PEcur = ++J4_PEcur;
-          if (J4_PEcur == J4_PE)
-          {
-            J4cur = ++J4cur;
-            J4_PEcur = 0;
-            digitalWrite(J4stepPin, LOW);
-            delayMicroseconds(curDelay);
-            digitalWrite(J4stepPin, HIGH);
-          }
-        }
-        else
-        {
-          J4_SE_1cur = 0;
-        }
-      }
-      else
-      {
-        J4_SE_2cur = 0;
-      }
-    }
-
-    /////// J5 ////////////////////////////////
-    ///find pulse every
-    if (J5cur < J5step)
-    {
-      J5_PE = (HighStep / J5step);
-      ///find left over 1
-      J5_LO_1 = (HighStep - (J5step * J5_PE));
-      ///find skip 1
-      if (J5_LO_1 > 0)
-      {
-        J5_SE_1 = (HighStep / J5_LO_1);
-      }
-      else
-      {
-        J5_SE_1 = 0;
-      }
-      ///find left over 2
-      if (J5_SE_1 > 0)
-      {
-        J5_LO_2 = HighStep - ((J5step * J5_PE) + ((J5step * J5_PE) / J5_SE_1));
-      }
-      else
-      {
-        J5_LO_2 = 0;
-      }
-      ///find skip 2
-      if (J5_LO_2 > 0)
-      {
-        J5_SE_2 = (HighStep / J5_LO_2);
-      }
-      else
-      {
-        J5_SE_2 = 0;
-      }
-      /////////  J5  ///////////////
-      if (J5_SE_2 == 0)
-      {
-        J5_SE_2cur = (J5_SE_2 + 1);
-      }
-      if (J5_SE_2cur != J5_SE_2)
-      {
-        J5_SE_2cur = ++J5_SE_2cur;
-        if (J5_SE_1 == 0)
-        {
-          J5_SE_1cur = (J5_SE_1 + 1);
-        }
-        if (J5_SE_1cur != J5_SE_1)
-        {
-          J5_SE_1cur = ++J5_SE_1cur;
-          J5_PEcur = ++J5_PEcur;
-          if (J5_PEcur == J5_PE)
-          {
-            J5cur = ++J5cur;
-            J5_PEcur = 0;
-            digitalWrite(J5stepPin, LOW);
-            delayMicroseconds(curDelay);
-            digitalWrite(J5stepPin, HIGH);
-          }
-        }
-        else
-        {
-          J5_SE_1cur = 0;
-        }
-      }
-      else
-      {
-        J5_SE_2cur = 0;
-      }
-    }
-
-    /////// J6 ////////////////////////////////
-    ///find pulse every
-    if (J6cur < J6step)
-    {
-      J6_PE = (HighStep / J6step);
-      ///find left over 1
-      J6_LO_1 = (HighStep - (J6step * J6_PE));
-      ///find skip 1
-      if (J6_LO_1 > 0)
-      {
-        J6_SE_1 = (HighStep / J6_LO_1);
-      }
-      else
-      {
-        J6_SE_1 = 0;
-      }
-      ///find left over 2
-      if (J6_SE_1 > 0)
-      {
-        J6_LO_2 = HighStep - ((J6step * J6_PE) + ((J6step * J6_PE) / J6_SE_1));
-      }
-      else
-      {
-        J6_LO_2 = 0;
-      }
-      ///find skip 2
-      if (J6_LO_2 > 0)
-      {
-        J6_SE_2 = (HighStep / J6_LO_2);
-      }
-      else
-      {
-        J6_SE_2 = 0;
-      }
-      /////////  J6  ///////////////
-      if (J6_SE_2 == 0)
-      {
-        J6_SE_2cur = (J6_SE_2 + 1);
-      }
-      if (J6_SE_2cur != J6_SE_2)
-      {
-        J6_SE_2cur = ++J6_SE_2cur;
-        if (J6_SE_1 == 0)
-        {
-          J6_SE_1cur = (J6_SE_1 + 1);
-        }
-        if (J6_SE_1cur != J6_SE_1)
-        {
-          J6_SE_1cur = ++J6_SE_1cur;
-          J6_PEcur = ++J6_PEcur;
-          if (J6_PEcur == J6_PE)
-          {
-            J6cur = ++J6cur;
-            J6_PEcur = 0;
-            digitalWrite(J6stepPin, LOW);
-            delayMicroseconds(curDelay);
-            digitalWrite(J6stepPin, HIGH);
-          }
-        }
-        else
-        {
-          J6_SE_1cur = 0;
-        }
-      }
-      else
-      {
-        J6_SE_2cur = 0;
-      }
-    }
-
-    /////// TR ////////////////////////////////
-    ///find pulse every
-    if (TRcur < TRstep)
-    {
-      TR_PE = (HighStep / TRstep);
-      ///find left over 1
-      TR_LO_1 = (HighStep - (TRstep * TR_PE));
-      ///find skip 1
-      if (TR_LO_1 > 0)
-      {
-        TR_SE_1 = (HighStep / TR_LO_1);
-      }
-      else
-      {
-        TR_SE_1 = 0;
-      }
-      ///find left over 2
-      if (TR_SE_1 > 0)
-      {
-        TR_LO_2 = HighStep - ((TRstep * TR_PE) + ((TRstep * TR_PE) / TR_SE_1));
-      }
-      else
-      {
-        TR_LO_2 = 0;
-      }
-      ///find skip 2
-      if (TR_LO_2 > 0)
-      {
-        TR_SE_2 = (HighStep / TR_LO_2);
-      }
-      else
-      {
-        TR_SE_2 = 0;
-      }
-      /////////  TR  ///////////////
-      if (TR_SE_2 == 0)
-      {
-        TR_SE_2cur = (TR_SE_2 + 1);
-      }
-      if (TR_SE_2cur != TR_SE_2)
-      {
-        TR_SE_2cur = ++TR_SE_2cur;
-        if (TR_SE_1 == 0)
-        {
-          TR_SE_1cur = (TR_SE_1 + 1);
-        }
-        if (TR_SE_1cur != TR_SE_1)
-        {
-          TR_SE_1cur = ++TR_SE_1cur;
-          TR_PEcur = ++TR_PEcur;
-          if (TR_PEcur == TR_PE)
-          {
-            TRcur = ++TRcur;
-            TR_PEcur = 0;
-            digitalWrite(TRstepPin, LOW);
-            delayMicroseconds(curDelay);
-            digitalWrite(TRstepPin, HIGH);
-          }
-        }
-        else
-        {
-          TR_SE_1cur = 0;
-        }
-      }
-      else
-      {
-        TR_SE_2cur = 0;
-      }
-    }
-
-    // inc cur step
-    highStepCur = ++highStepCur;
+    // increase cur step
+    ++highStepCur;
   }
 }
+
+ros::Publisher pub_("arm_hardware_response", &response_string_);
 
 void messageCallback(const std_msgs::String& Msg)
 {
@@ -961,129 +294,86 @@ void messageCallback(const std_msgs::String& Msg)
   String cmd(Msg.data);
   state_ = cmd.substring(0, 2) == "hm" ? STA_HOMING : STA_SLAVE;
 
-  if (state_ == STA_SLAVE && cmd != pre_cmd_)
+  if (state_ == STA_SLAVE )
   {
-    driveMotorsJ(cmd);
+    if (cmd != pre_cmd_)
+    {
+      driveMotorsJ(cmd);
     
-    pre_cmd_ = cmd;
+      pre_cmd_ = cmd; 
+    }
+  }
+  else
+  {
+    response_string_.data = "homing";
+    pub_.publish(&response_string_);
+    parseKinematics(cmd, home_dirs_, home_steps_, home_kinematics_);
   }
 }
 
-ros::Subscriber<std_msgs::String> sub("arm_hardware_interface", &messageCallback);
+ros::Subscriber<std_msgs::String> sub_("arm_hardware_interface", &messageCallback);
+
+void homing()
+{  
+  for (int i = 0; i < JOINT_NUM; ++i)
+  {
+    if (home_steps_[i] > 0)
+    {
+      // rotate towards limit switch
+      String cmd = "MJ" + String(char(65 + i)) + String((home_dirs_[i] + 1) % 2) + "16000S15G15H10I20K5";
+      driveMotorsJ(cmd);
+      // back to home position
+      cmd = "MJ" + String(char(65 + i)) + String(home_dirs_[i]) + String(home_steps_[i]) + 
+        "S" + String(int(home_kinematics_[K_SPEED_IN])) + 
+        "G" + String(int(home_kinematics_[K_ACC_DUR])) + "H" + String(int(home_kinematics_[K_ACC_SPD])) +
+        "I" + String(int(home_kinematics_[K_DCC_DUR])) + "K" + String(int(home_kinematics_[K_DCC_SPD]));
+      state_ = STA_HOMING_TURN;
+      driveMotorsJ(cmd);
+      state_ = STA_HOMING;
+    }
+  }
+
+#if MOVEIT
+  response_string_.data = "homed";
+  pub_.publish(&response_string_);
+#endif
+  
+  state_ = STA_SLAVE;
+}
 
 void setup()
 {
-  Serial.begin(115200);
-
-  pinMode(A0, OUTPUT);
-  pinMode(A1, OUTPUT);
-  pinMode(A2, OUTPUT);
-  pinMode(A3, OUTPUT);
-  pinMode(A4, OUTPUT);
-  pinMode(A5, OUTPUT);
-  pinMode(A6, OUTPUT);
-  pinMode(A7, OUTPUT);
-
-  pinMode(TRstepPin, OUTPUT);
-  pinMode(TRdirPin, OUTPUT);
-  pinMode(J1stepPin, OUTPUT);
-  pinMode(J1dirPin, OUTPUT);
-  pinMode(J2stepPin, OUTPUT);
-  pinMode(J2dirPin, OUTPUT);
-  pinMode(J3stepPin, OUTPUT);
-  pinMode(J3dirPin, OUTPUT);
-  pinMode(J4stepPin, OUTPUT);
-  pinMode(J4dirPin, OUTPUT);
-  pinMode(J5stepPin, OUTPUT);
-  pinMode(J5dirPin, OUTPUT);
-  pinMode(J6stepPin, OUTPUT);
-  pinMode(J6dirPin, OUTPUT);
-
-  pinMode(J1calPin, INPUT_PULLUP);
-  pinMode(J2calPin, INPUT_PULLUP);
-  pinMode(J3calPin, INPUT_PULLUP);
-  pinMode(J4calPin, INPUT_PULLUP);
-  pinMode(J5calPin, INPUT_PULLUP);
-  pinMode(J6calPin, INPUT_PULLUP);
-
-  for (int i = 0; i < JOINT_NUM; ++i)
-  {
-    pinMode(input_limits_[i], INPUT_PULLUP);
-  }
-  pinMode(Input28, INPUT_PULLUP);
-  pinMode(Input29, INPUT_PULLUP);
-  pinMode(Input30, INPUT_PULLUP);
-  pinMode(Input31, INPUT_PULLUP);
-  pinMode(Input32, INPUT_PULLUP);
-  pinMode(Input33, INPUT_PULLUP);
-  pinMode(Input34, INPUT_PULLUP);
-  pinMode(Input35, INPUT_PULLUP);
-  pinMode(Input36, INPUT_PULLUP);
-  pinMode(Input37, INPUT_PULLUP);
-
-  pinMode(Output38, OUTPUT);
-  pinMode(Output39, OUTPUT);
-  pinMode(Output40, OUTPUT);
-  pinMode(Output41, OUTPUT);
-  pinMode(Output42, OUTPUT);
-  pinMode(Output43, OUTPUT);
-  pinMode(Output44, OUTPUT);
-  pinMode(Output45, OUTPUT);
-  pinMode(Output46, OUTPUT);
-  pinMode(Output47, OUTPUT);
-  pinMode(Output48, OUTPUT);
-  pinMode(Output49, OUTPUT);
-  pinMode(Output50, OUTPUT);
-  pinMode(Output51, OUTPUT);
-  pinMode(Output52, OUTPUT);
-  pinMode(Output53, OUTPUT); // commented for modified
-
-  digitalWrite(Output38, HIGH);
-  digitalWrite(Output39, HIGH);
-  digitalWrite(Output40, HIGH);
-  digitalWrite(Output41, HIGH);
-  digitalWrite(Output42, HIGH);
-  digitalWrite(Output43, HIGH);
-  digitalWrite(Output44, HIGH);
-  digitalWrite(Output45, HIGH);
-
-  digitalWrite(TRstepPin, HIGH);
-  digitalWrite(J1stepPin, HIGH);
-  digitalWrite(J2stepPin, HIGH);
-  digitalWrite(J3stepPin, HIGH);
-  digitalWrite(J4stepPin, HIGH);
-  digitalWrite(J5stepPin, HIGH);
-  digitalWrite(J6stepPin, HIGH);
-
 #if MOVEIT
   // init node
   nh_.initNode();
-  nh_.subscribe(sub);
+  nh_.subscribe(sub_);
+  nh_.advertise(pub_);
 #else
-  Serial.println("started up");
+  Serial.begin(115200);
+  Serial.println("starting up...");
 #endif
+
+  pinMode(output_pin_53_, OUTPUT); // LED checking
+
+  for (int i = 0; i < JOINT_NUM; ++i)
+  {
+    pinMode(joint_step_pin_[i], OUTPUT);
+    pinMode(joint_dir_pin_[i], OUTPUT);
+    pinMode(joint_limit_pin_[i], INPUT_PULLUP);
+
+    digitalWrite(joint_step_pin_[i], HIGH);
+  }
 }
 
 void loop()
-{
+{ 
 #if MOVEIT
   switch (state_)
   {
   case STA_SLAVE:
     break;
   case STA_HOMING:
-    // check limit switches
-    // taking polling rather than interrupt is due to meager interrupt pins
-    auto now = millis();
-    if (now - pre_ticks > 100)
-    {
-      for (int i = 0; i < JOINT_NUM; ++i)
-      {
-        touched_[i] = digitalRead(input_limits_[i]);
-      }
-    
-      pre_ticks_ = now;
-    }
+    homing();
     break;
   default:
     break;
@@ -1096,21 +386,23 @@ void loop()
   while (Serial.available() > 0)
   {
     char recieved = Serial.read();
-    inData += recieved;
+    recv_string_ += recieved;
     if (recieved == '\n')
     {
-      String function = inData.substring(0, 2);
-
+      String function = recv_string_.substring(0, 2);
       if (function == "MJ")
       {
         Serial.print("command recieved");
-        driveMotorsJ(inData);
-        inData = ""; // Clear recieved buffer
+        driveMotorsJ(recv_string_);
       }
       else if (function == "hm")
       {
-        
+        Serial.println("homing received");
+        parseKinematics(recv_string_, home_dirs_, home_steps_, home_kinematics_);
+        homing();
       }
+
+      recv_string_ = ""; // clear recieved buffer
     }
   }
 #endif
