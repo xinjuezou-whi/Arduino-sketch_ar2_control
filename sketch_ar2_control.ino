@@ -25,19 +25,24 @@ Changelog:
 
 #define MOVEIT 1
 
-const String VERSION = "00.06";
+const String VERSION = "00.07";
 
 // ROS
 ros::NodeHandle nh_;
+std_msgs::String response_string_;
+ros::Publisher pub_("arm_hardware_response", &response_string_);
+char pub_data_[32] = { 0 };
 
 // control variables
 String recv_string_;
-std_msgs::String response_string_;
 String cmd_;
-String pre_cmd_;
 const int JOINT_NUM = 6;
 enum STATE { STA_HOMING = 0, STA_HOMING_TURN, STA_SLAVE, STA_STANDBY, STA_UNDEFINED };
 uint8_t state_ = STA_SLAVE;
+long pre_ticks_ = 0;
+
+// status
+int cur_pose_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
 
 // SPEED // millisecond multiplier // raise value to slow robot speeds // DEFAULT = 200
 const int SPEED_MULTIPLE = 200;
@@ -46,9 +51,7 @@ int home_dirs_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
 int home_steps_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
 float home_kinematics_[K_SUM] = { 0.0, 0.0, 0.0, 0.0, 0.0 };
 
-// MOTOR DIRECTION - motor directions can be changed on the caibration page in the software,
-// but can also be changed here: example using DM542T driver(CW) set to 1 - if using ST6600 or DM320T driver(CCW) set to 0
-// DEFAULT = 111011
+// IO
 const int joint_step_pin_[JOINT_NUM] = { 2, 4, 6, 8, 10, 12 };
 const int joint_dir_pin_[JOINT_NUM] = { 3, 5, 7, 9, 11, 13 };
 const int joint_limit_pin_[JOINT_NUM] = { 22, 23, 24, 25, 26, 27 };
@@ -176,7 +179,7 @@ void driveMotorsJ(const String& Command)
       if (state_ != STA_HOMING_TURN && digitalRead(joint_limit_pin_[i]) == LOW)
       {
         digitalWrite(joint_step_pin_[i], HIGH);
-        jCur[i] = jStep[i];
+        jStep[i] = jCur[i];
 #ifdef DEBUG
         Serial.println("limit triggered");
 #endif
@@ -238,6 +241,25 @@ void driveMotorsJ(const String& Command)
                 digitalWrite(joint_step_pin_[i], LOW);
                 delayMicroseconds(curDelay);
                 digitalWrite(joint_step_pin_[i], HIGH);
+
+                long cur = millis();
+                if (cur - pre_ticks_ > 5)
+                {
+                  int pose = cur_pose_[i] + jCur[i] * (jDir[i] == 0 ? -1 : 1);
+#if MOVEIT
+                  sprintf(pub_data_, "p%d%d", i, pose);
+                  response_string_.data = pub_data_;
+                  pub_.publish(&response_string_);
+#else
+#ifdef DEBUG
+                  Serial.print("cur ");
+                  Serial.println(jCur[i]);
+                  Serial.println(pose);
+#endif
+#endif
+
+                  pre_ticks_ = cur;
+                }
               }
             }
             else
@@ -257,10 +279,14 @@ void driveMotorsJ(const String& Command)
     ++highStepCur;
   }
 
+  // update current position
+  for (int i = 0; i < JOINT_NUM; ++i)
+  {
+    cur_pose_[i] += jCur[i] * (jDir[i] == 0 ? -1 : 1);
+  }
+
   state_ = STA_STANDBY;
 }
-
-ros::Publisher pub_("arm_hardware_response", &response_string_);
 
 void messageCallback(const std_msgs::String& Msg)
 {
@@ -296,12 +322,24 @@ void homing()
       state_ = STA_HOMING_TURN;
       driveMotorsJ(cmd);
       state_ = STA_HOMING;
+
+      cur_pose_[i] = 0;
+#if MOVEIT
+      sprintf(pub_data_, "p%d%d", i, cur_pose_[i]);
+      response_string_.data = pub_data_;
+      pub_.publish(&response_string_);
+#endif
     }
   }
 
 #if MOVEIT
-  response_string_.data = "homed";
-  pub_.publish(&response_string_);
+  for (int i = 0; i < 3; ++i)
+  {
+    response_string_.data = "homed";
+    pub_.publish(&response_string_);
+
+    delay(20);
+  }
 #endif
   
   state_ = STA_STANDBY;
@@ -311,6 +349,7 @@ void setup()
 {
 #if MOVEIT
   // init node
+  nh_.getHardware()->setBaud(115200);
   nh_.initNode();
   nh_.subscribe(sub_);
   nh_.advertise(pub_);
@@ -337,12 +376,7 @@ void loop()
   switch (state_)
   {
   case STA_SLAVE:
-    if (cmd_ != pre_cmd_)
-    {
-      driveMotorsJ(cmd_);
-    
-      pre_cmd_ = cmd_;
-    }
+    driveMotorsJ(cmd_);
     break;
   case STA_HOMING:
     homing();
