@@ -77,12 +77,6 @@ void parseKinematics(const String& Command, int* Jdir, int* Jstep, float* Kinema
     {
       int endPos = jStart[i + 1] < 0 || (i == JOINT_NUM - 1) ? spStart : jStart[i + 1]; 
       Jstep[i] = Command.substring(jStart[i] + 2, endPos).toInt();
-//      Serial.print("start ");
-//      Serial.print(jStart[i]);
-//      Serial.print(" end ");
-//      Serial.println(endPos);
-//      Serial.println(Command.substring(jStart[i] + 2, endPos).toInt());
-//      Serial.println(Jstep[i]);
     }
   }
   
@@ -292,7 +286,7 @@ void homing()
     if (home_steps_[i] > 0)
     {
       // rotate towards limit switch
-      String cmd = "MJ" + String(char(65 + i)) + String((home_dirs_[i] + 1) % 2) + "18000S20G15H15I15K15";
+      String cmd = "MJ" + String(char(65 + i)) + String((home_dirs_[i] + 1) % 2) + "20000S20G15H15I15K15";
       driveMotorsJ(cmd);
       // back to home position
       cmd = "MJ" + String(char(65 + i)) + String(home_dirs_[i]) + String(home_steps_[i]) + 
