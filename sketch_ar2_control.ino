@@ -25,7 +25,7 @@ Changelog:
 
 #define MOVEIT 1
 
-const String VERSION = "00.05";
+const String VERSION = "00.06";
 
 // ROS
 ros::NodeHandle nh_;
@@ -33,6 +33,7 @@ ros::NodeHandle nh_;
 // control variables
 String recv_string_;
 std_msgs::String response_string_;
+String cmd_;
 String pre_cmd_;
 const int JOINT_NUM = 6;
 enum STATE { STA_HOMING = 0, STA_HOMING_TURN, STA_SLAVE, STA_UNDEFINED };
@@ -48,31 +49,10 @@ float home_kinematics_[K_SUM] = { 0.0, 0.0, 0.0, 0.0, 0.0 };
 // MOTOR DIRECTION - motor directions can be changed on the caibration page in the software,
 // but can also be changed here: example using DM542T driver(CW) set to 1 - if using ST6600 or DM320T driver(CCW) set to 0
 // DEFAULT = 111011
-const int joint_rotation_dir_[JOINT_NUM] = { 1, 1, 1, 0, 1, 1 };
 const int joint_step_pin_[JOINT_NUM] = { 2, 4, 6, 8, 10, 12 };
 const int joint_dir_pin_[JOINT_NUM] = { 3, 5, 7, 9, 11, 13 };
 const int joint_limit_pin_[JOINT_NUM] = { 22, 23, 24, 25, 26, 27 };
 const int output_pin_53_ = 53;
-
-void setDirection(int Pin, int RotDir, int Dir)
-{
-  if (Dir == 1 && RotDir == 1)
-  {
-    digitalWrite(Pin, LOW);
-  }
-  else if (Dir == 1 && RotDir == 0)
-  {
-    digitalWrite(Pin, HIGH);
-  }
-  else if (Dir == 0 && RotDir == 1)
-  {
-    digitalWrite(Pin, HIGH);
-  }
-  else if (Dir == 0 && RotDir == 0)
-  {
-    digitalWrite(Pin, LOW);
-  }
-}
 
 void parseKinematics(const String& Command, int* Jdir, int* Jstep, float* Kinematics)
 {
@@ -156,7 +136,7 @@ void driveMotorsJ(const String& Command)
   // SET DIRECTIONS
   for (int i = 0; i < JOINT_NUM; ++i)
   {
-    setDirection(joint_dir_pin_[i], joint_rotation_dir_[i], jDir[i]);
+    digitalWrite(joint_dir_pin_[i], (jDir[i] + 1) % 2);
   }
 
   ///// CALC SPEEDS //////
@@ -288,25 +268,16 @@ ros::Publisher pub_("arm_hardware_response", &response_string_);
 
 void messageCallback(const std_msgs::String& Msg)
 {
-  digitalWrite(53, HIGH-digitalRead(53)); // blink the led
+  digitalWrite(53, HIGH - digitalRead(53)); // blink the led
 
-  String cmd(Msg.data);
-  state_ = cmd.substring(0, 2) == "hm" ? STA_HOMING : STA_SLAVE;
-
-  if (state_ == STA_SLAVE )
-  {
-    if (cmd != pre_cmd_)
-    {
-      driveMotorsJ(cmd);
-    
-      pre_cmd_ = cmd; 
-    }
-  }
-  else
+  cmd_ = Msg.data;
+  state_ = cmd_.substring(0, 2) == "hm" ? STA_HOMING : STA_SLAVE;
+  
+  if (state_ == STA_HOMING)
   {
     response_string_.data = "homing";
     pub_.publish(&response_string_);
-    parseKinematics(cmd, home_dirs_, home_steps_, home_kinematics_);
+    parseKinematics(cmd_, home_dirs_, home_steps_, home_kinematics_);
   }
 }
 
@@ -365,11 +336,17 @@ void setup()
 }
 
 void loop()
-{ 
+{
 #if MOVEIT
   switch (state_)
   {
   case STA_SLAVE:
+    if (cmd_ != pre_cmd_)
+    {
+      driveMotorsJ(cmd_);
+    
+      pre_cmd_ = cmd_;
+    }
     break;
   case STA_HOMING:
     homing();
