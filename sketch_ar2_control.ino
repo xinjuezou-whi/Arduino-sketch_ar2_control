@@ -36,7 +36,7 @@ std_msgs::String response_string_;
 String cmd_;
 String pre_cmd_;
 const int JOINT_NUM = 6;
-enum STATE { STA_HOMING = 0, STA_HOMING_TURN, STA_SLAVE, STA_UNDEFINED };
+enum STATE { STA_HOMING = 0, STA_HOMING_TURN, STA_SLAVE, STA_STANDBY, STA_UNDEFINED };
 uint8_t state_ = STA_SLAVE;
 
 // SPEED // millisecond multiplier // raise value to slow robot speeds // DEFAULT = 200
@@ -262,6 +262,8 @@ void driveMotorsJ(const String& Command)
     // increase cur step
     ++highStepCur;
   }
+
+  state_ = STA_STANDBY;
 }
 
 ros::Publisher pub_("arm_hardware_response", &response_string_);
@@ -290,7 +292,7 @@ void homing()
     if (home_steps_[i] > 0)
     {
       // rotate towards limit switch
-      String cmd = "MJ" + String(char(65 + i)) + String((home_dirs_[i] + 1) % 2) + "16000S20G15H15I15K15";
+      String cmd = "MJ" + String(char(65 + i)) + String((home_dirs_[i] + 1) % 2) + "18000S20G15H15I15K15";
       driveMotorsJ(cmd);
       // back to home position
       cmd = "MJ" + String(char(65 + i)) + String(home_dirs_[i]) + String(home_steps_[i]) + 
@@ -308,7 +310,7 @@ void homing()
   pub_.publish(&response_string_);
 #endif
   
-  state_ = STA_SLAVE;
+  state_ = STA_STANDBY;
 }
 
 void setup()
