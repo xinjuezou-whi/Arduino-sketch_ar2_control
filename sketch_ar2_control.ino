@@ -175,7 +175,6 @@ void driveMotorsJ(const String& Command)
   float dccSpdT = kinematics[K_DCC_DUR] / 100.0;
   float dccSpeed = ((SPEED_MULTIPLE + (SPEED_MULTIPLE / dccSpdT)) / speedRatio);
   float dccInc = (regSpeed + dccSpeed) / dccStep;
-  dccSpeed = regSpeed;
 
   ///// DRIVE MOTORS /////
   while (jCur[0] < jStep[0] || jCur[1] < jStep[1] || jCur[2] < jStep[2] || jCur[3] < jStep[3] || jCur[4] < jStep[4] || jCur[5] < jStep[5])
@@ -320,7 +319,7 @@ void homing()
     if (home_steps_[i] > 0)
     {
       // rotate towards limit switch
-      String cmd = "MJ" + String(char(65 + i)) + String((home_dirs_[i] + 1) % 2) + "16000S15G15H10I20K5";
+      String cmd = "MJ" + String(char(65 + i)) + String((home_dirs_[i] + 1) % 2) + "16000S20G15H15I15K15";
       driveMotorsJ(cmd);
       // back to home position
       cmd = "MJ" + String(char(65 + i)) + String(home_dirs_[i]) + String(home_steps_[i]) + 
