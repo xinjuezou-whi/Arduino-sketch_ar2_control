@@ -134,7 +134,7 @@ void driveMotorsJ(const String& Command)
   }
 
   ///// CALC SPEEDS //////
-  float accStep = (highStep * (kinematics[K_ACC_DUR] / 100));
+  float accStep = highStep * (kinematics[K_ACC_DUR] / 100);
   float dccStep = highStep - (highStep * (kinematics[K_DCC_DUR] / 100));
   float speedRatio = kinematics[K_SPEED_IN] / 100.0;
   // REG SPEED
