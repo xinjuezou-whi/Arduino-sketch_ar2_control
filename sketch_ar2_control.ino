@@ -25,7 +25,7 @@ Changelog:
 
 #define MOVEIT 1
 
-const String VERSION = "00.07";
+const String VERSION = "00.08";
 
 // ROS
 ros::NodeHandle nh_;
@@ -40,6 +40,7 @@ const int JOINT_NUM = 6;
 enum STATE { STA_HOMING = 0, STA_HOMING_TURN, STA_SLAVE, STA_STANDBY, STA_UNDEFINED };
 uint8_t state_ = STA_SLAVE;
 long pre_ticks_ = 0;
+long last_home_ticks_ = 0;
 
 // status
 int cur_pose_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
@@ -164,7 +165,7 @@ void driveMotorsJ(const String& Command)
     }
     else if (highStepCur >= dccStep)
     {
-      curDelay = dccSpeed / jActive;
+      curDelay = fabs(dccSpeed / jActive);
       dccSpeed = dccSpeed + dccInc;
     }
     else
@@ -257,7 +258,6 @@ void driveMotorsJ(const String& Command)
                   Serial.println(pose);
 #endif
 #endif
-
                   pre_ticks_ = cur;
                 }
               }
@@ -306,42 +306,42 @@ void messageCallback(const std_msgs::String& Msg)
 ros::Subscriber<std_msgs::String> sub_("arm_hardware_interface", &messageCallback);
 
 void homing()
-{  
-  for (int i = 0; i < JOINT_NUM; ++i)
+{
+  if (millis() - last_home_ticks_ > 1000)
   {
-    if (home_steps_[i] > 0)
+    for (int i = 0; i < JOINT_NUM; ++i)
     {
-      // rotate towards limit switch
-      String cmd = "MJ" + String(char(65 + i)) + String((home_dirs_[i] + 1) % 2) + "20000S20G15H15I15K15";
-      driveMotorsJ(cmd);
-      // back to home position
-      cmd = "MJ" + String(char(65 + i)) + String(home_dirs_[i]) + String(home_steps_[i]) + 
-        "S" + String(int(home_kinematics_[K_SPEED_IN])) + 
-        "G" + String(int(home_kinematics_[K_ACC_DUR])) + "H" + String(int(home_kinematics_[K_ACC_SPD])) +
-        "I" + String(int(home_kinematics_[K_DCC_DUR])) + "K" + String(int(home_kinematics_[K_DCC_SPD]));
-      state_ = STA_HOMING_TURN;
-      driveMotorsJ(cmd);
-      state_ = STA_HOMING;
+      if (home_steps_[i] > 0)
+      {
+        // rotate towards limit switch
+        String cmd = "MJ" + String(char(65 + i)) + String((home_dirs_[i] + 1) % 2) + "20000S20G15H15I15K15";
+        driveMotorsJ(cmd);
+        // back to home position
+        cmd = "MJ" + String(char(65 + i)) + String(home_dirs_[i]) + String(home_steps_[i]) + 
+          "S" + String(int(home_kinematics_[K_SPEED_IN])) + 
+          "G" + String(int(home_kinematics_[K_ACC_DUR])) + "H" + String(int(home_kinematics_[K_ACC_SPD])) +
+          "I" + String(int(home_kinematics_[K_DCC_DUR])) + "K" + String(int(home_kinematics_[K_DCC_SPD]));
+        state_ = STA_HOMING_TURN;
+        driveMotorsJ(cmd);
+        state_ = STA_HOMING;
 
-      cur_pose_[i] = 0;
+        cur_pose_[i] = 0;
 #if MOVEIT
-      sprintf(pub_data_, "p%d%d", i, cur_pose_[i]);
-      response_string_.data = pub_data_;
-      pub_.publish(&response_string_);
+        sprintf(pub_data_, "p%d%d", i, cur_pose_[i]);
+        response_string_.data = pub_data_;
+        pub_.publish(&response_string_);
 #endif
+      }
     }
-  }
 
 #if MOVEIT
-  for (int i = 0; i < 3; ++i)
-  {
     response_string_.data = "homed";
     pub_.publish(&response_string_);
-
-    delay(20);
-  }
 #endif
-  
+
+    last_home_ticks_ = millis();
+  }
+
   state_ = STA_STANDBY;
 }
 
@@ -358,8 +358,6 @@ void setup()
   Serial.println("starting up...");
 #endif
 
-  pinMode(output_pin_53_, OUTPUT); // LED checking
-
   for (int i = 0; i < JOINT_NUM; ++i)
   {
     pinMode(joint_step_pin_[i], OUTPUT);
@@ -368,6 +366,7 @@ void setup()
 
     digitalWrite(joint_step_pin_[i], HIGH);
   }
+  pinMode(output_pin_53_, OUTPUT); // LED checking
 }
 
 void loop()
