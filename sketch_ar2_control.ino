@@ -37,7 +37,7 @@ char pub_data_[32] = { 0 };
 String recv_string_;
 String cmd_;
 const int JOINT_NUM = 6;
-enum STATE { STA_HOMING = 0, STA_HOMING_TURN, STA_SLAVE, STA_STANDBY, STA_UNDEFINED };
+enum STATE { STA_HOMING = 0, STA_SLAVE, STA_STANDBY, STA_UNDEFINED };
 uint8_t state_ = STA_SLAVE;
 long pre_ticks_ = 0;
 long last_home_ticks_ = 0;
@@ -49,6 +49,7 @@ int cur_pose_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
 const int SPEED_MULTIPLE = 200;
 enum KINEMATICS { K_SPEED_IN = 0, K_ACC_DUR, K_ACC_SPD, K_DCC_DUR, K_DCC_SPD, K_SUM };
 int home_dirs_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+int limits_dir_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
 int home_steps_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
 float home_kinematics_[K_SUM] = { 0.0, 0.0, 0.0, 0.0, 0.0 };
 
@@ -177,7 +178,7 @@ void driveMotorsJ(const String& Command)
     for (int i = 0; i < JOINT_NUM; ++i)
     {
       /// find pulse every
-      if (state_ != STA_HOMING_TURN && digitalRead(joint_limit_pin_[i]) == LOW)
+      if (jDir[i] == limits_dir_[i] && digitalRead(joint_limit_pin_[i]) == LOW)
       {
         digitalWrite(joint_step_pin_[i], HIGH);
         jStep[i] = jCur[i];
@@ -300,6 +301,11 @@ void messageCallback(const std_msgs::String& Msg)
     response_string_.data = "homing";
     pub_.publish(&response_string_);
     parseKinematics(cmd_, home_dirs_, home_steps_, home_kinematics_);
+    // infer the direction of limits
+    for (int i =0; i < JOINT_NUM; ++i)
+    {
+      limits_dir_[i] = (home_dirs_[i] + 1) % 2;
+    }
   }
 }
 
@@ -314,16 +320,16 @@ void homing()
       if (home_steps_[i] > 0)
       {
         // rotate towards limit switch
-        String cmd = "MJ" + String(char(65 + i)) + String((home_dirs_[i] + 1) % 2) + "20000S20G15H15I15K15";
+        String cmd = "MJ" + String(char(65 + i)) + String(limits_dir_[i]) + "20000S20G15H15I15K15";
         driveMotorsJ(cmd);
         // back to home position
         cmd = "MJ" + String(char(65 + i)) + String(home_dirs_[i]) + String(home_steps_[i]) + 
           "S" + String(int(home_kinematics_[K_SPEED_IN])) + 
           "G" + String(int(home_kinematics_[K_ACC_DUR])) + "H" + String(int(home_kinematics_[K_ACC_SPD])) +
           "I" + String(int(home_kinematics_[K_DCC_DUR])) + "K" + String(int(home_kinematics_[K_DCC_SPD]));
-        state_ = STA_HOMING_TURN;
+
+        // rotate towards home position
         driveMotorsJ(cmd);
-        state_ = STA_HOMING;
 
         cur_pose_[i] = 0;
 #if MOVEIT
