@@ -25,7 +25,7 @@ Changelog:
 
 #define MOVEIT 1
 
-const String VERSION = "00.08";
+const String VERSION = "00.09";
 
 // ROS
 ros::NodeHandle nh_;
@@ -51,7 +51,7 @@ enum KINEMATICS { K_SPEED_IN = 0, K_ACC_DUR, K_ACC_SPD, K_DCC_DUR, K_DCC_SPD, K_
 int home_dirs_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
 int limits_dir_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
 int home_steps_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
-float home_kinematics_[K_SUM] = { 0.0, 0.0, 0.0, 0.0, 0.0 };
+int home_kinematics_[K_SUM] = { 0, 0, 0, 0, 0 };
 
 // IO
 const int joint_step_pin_[JOINT_NUM] = { 2, 4, 6, 8, 10, 12 };
@@ -59,7 +59,7 @@ const int joint_dir_pin_[JOINT_NUM] = { 3, 5, 7, 9, 11, 13 };
 const int joint_limit_pin_[JOINT_NUM] = { 22, 23, 24, 25, 26, 27 };
 const int output_pin_53_ = 53;
 
-void parseKinematics(const String& Command, int* Jdir, int* Jstep, float* Kinematics)
+void parseKinematics(const String& Command, int* Jdir, int* Jstep, int* Kinematics)
 {
   memset(Jdir, 0, sizeof(int) * JOINT_NUM);
   int jStart[JOINT_NUM];
@@ -85,11 +85,11 @@ void parseKinematics(const String& Command, int* Jdir, int* Jstep, float* Kinema
     }
   }
   
-  Kinematics[K_SPEED_IN] = Command.substring(spStart + 1, adStart).toFloat();
-  Kinematics[K_ACC_DUR] = Command.substring(adStart + 1, asStart).toFloat();
-  Kinematics[K_ACC_SPD] = Command.substring(asStart + 1, ddStart).toFloat();
-  Kinematics[K_DCC_DUR] = Command.substring(ddStart + 1, dsStart).toFloat();
-  Kinematics[K_DCC_SPD] = Command.substring(dsStart + 1).toFloat();
+  Kinematics[K_SPEED_IN] = Command.substring(spStart + 1, adStart).toInt();
+  Kinematics[K_ACC_DUR] = Command.substring(adStart + 1, asStart).toInt();
+  Kinematics[K_ACC_SPD] = Command.substring(asStart + 1, ddStart).toInt();
+  Kinematics[K_DCC_DUR] = Command.substring(ddStart + 1, dsStart).toInt();
+  Kinematics[K_DCC_SPD] = Command.substring(dsStart + 1).toInt();
 }
 
 // DRIVE MOTORS J
@@ -97,7 +97,7 @@ void driveMotorsJ(const String& Command)
 {
   int jDir[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
   int jStep[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
-  float kinematics[K_SUM] = { 0.0, 0.0, 0.0, 0.0, 0.0 };
+  int kinematics[K_SUM] = { 0, 0, 0, 0, 0 };
   parseKinematics(Command, jDir, jStep, kinematics);
 
   // FIND HIGHEST STEP
@@ -117,20 +117,10 @@ void driveMotorsJ(const String& Command)
     jActive += jStep[i] >= 1 ? 1 : 0;
   }
 
-  int jPE[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
-  int jSE_1[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
-  int jSE_2[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
-  int jLO_1[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
-  int jLO_2[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
-  
-  // reset
   int jCur[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
-  int jPEcur[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
-  int jSE_1cur[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
-  int jSE_2cur[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
   
-  int highStepCur = 0;
-  float curDelay = 0.0;
+  int curHighStep = 0;
+  int curDelay = 0;
 
   // SET DIRECTIONS
   for (int i = 0; i < JOINT_NUM; ++i)
@@ -139,145 +129,85 @@ void driveMotorsJ(const String& Command)
   }
 
   ///// CALC SPEEDS //////
-  float accStep = highStep * (kinematics[K_ACC_DUR] / 100);
-  float dccStep = highStep - (highStep * (kinematics[K_DCC_DUR] / 100));
-  float speedRatio = kinematics[K_SPEED_IN] / 100.0;
   // REG SPEED
+  float speedRatio = kinematics[K_SPEED_IN] / 100.0;
   int regSpeed = int(SPEED_MULTIPLE / speedRatio);
-
+  
   // ACC SPEED
+  int accStep = kinematics[K_ACC_DUR] == 0 ? 0 : int(highStep * (kinematics[K_ACC_DUR] / 100.0));
   float accSpdT = kinematics[K_ACC_SPD] / 100.0;
   float accSpeed = ((SPEED_MULTIPLE + (SPEED_MULTIPLE / accSpdT)) / speedRatio);
-  float accInc = (regSpeed - accSpeed) / accStep;
+  int accInc = accStep == 0 ? 0 : (regSpeed - accSpeed) / accStep;
 
   // DCC SPEED
-  float dccSpdT = kinematics[K_DCC_DUR] / 100.0;
+  int dccStep = kinematics[K_DCC_DUR] == 0 ? 0 : int(highStep - (highStep * (kinematics[K_DCC_DUR] / 100.0)));
+  float dccSpdT = kinematics[K_DCC_SPD] / 100.0;
   float dccSpeed = ((SPEED_MULTIPLE + (SPEED_MULTIPLE / dccSpdT)) / speedRatio);
-  float dccInc = (regSpeed + dccSpeed) / dccStep;
+  int dccInc = dccStep == 0 ? 0 : (regSpeed + dccSpeed) / dccStep;
 
   ///// DRIVE MOTORS /////
-  while (jCur[0] < jStep[0] || jCur[1] < jStep[1] || jCur[2] < jStep[2] || jCur[3] < jStep[3] || jCur[4] < jStep[4] || jCur[5] < jStep[5])
+  while (jStep[0] > 0 || jStep[1] > 0 || jStep[2] > 0 || jStep[3] > 0 || jStep[4] > 0 || jStep[5] > 0)
   {    
     //// DELAY CALC /////
-    if (highStepCur <= accStep)
+    if (accStep > 0 && curHighStep <= accStep)
     {
-      curDelay = accSpeed / jActive;
+      curDelay = int(accSpeed / jActive);
       accSpeed = accSpeed + accInc;
     }
-    else if (highStepCur >= dccStep)
+    else if (dccStep > 0 && curHighStep >= dccStep)
     {
-      curDelay = fabs(dccSpeed / jActive);
+      curDelay = abs(int(dccSpeed / jActive));
       dccSpeed = dccSpeed + dccInc;
     }
     else
     {
-      curDelay = regSpeed / jActive;
+      curDelay = int(regSpeed / jActive);
     }
 
     // joint pulse
     for (int i = 0; i < JOINT_NUM; ++i)
     {
-      /// find pulse every
-      if (jDir[i] == limits_dir_[i] && digitalRead(joint_limit_pin_[i]) == LOW)
-      {
-        digitalWrite(joint_step_pin_[i], HIGH);
-        jStep[i] = jCur[i];
-#ifdef DEBUG
-        Serial.println("limit triggered");
-#endif
-      }
-      else
-      {
-        if (jCur[i] < jStep[i])
+        if (jStep[i] > 0)
         {
-          jPE[i] = highStep / jStep[i];
-          /// find left over 1
-          jLO_1[i] = (highStep - (jStep[i] * jPE[i]));
-          /// find skip 1
-          if (jLO_1[i] > 0)
+          if (jDir[i] == limits_dir_[i] && digitalRead(joint_limit_pin_[i]) == LOW)
           {
-            jSE_1[i] = highStep / jLO_1[i];
+            digitalWrite(joint_step_pin_[i], HIGH);
+            jStep[i] = 0;
+#ifdef DEBUG
+            Serial.println("limit triggered");
+#endif
           }
           else
           {
-            jSE_1[i] = 0;
-          }
-          /// find left over 2
-          if (jSE_1[i] > 0)
-          {
-            jLO_2[i] = highStep - ((jStep[i] * jPE[i]) + ((jStep[i] * jPE[i]) / jSE_1[i]));
-          }
-          else
-          {
-            jLO_2[i] = 0;
-          }
-          /// find skip 2
-          if (jLO_2[i] > 0)
-          {
-            jSE_2[i] = highStep / jLO_2[i];
-          }
-          else
-          {
-            jSE_2[i] = 0;
-          }
-          /// joint
-          if (jSE_2[i] == 0)
-          {
-            jSE_2cur[i] = jSE_2[i] + 1;
-          }
-          if (jSE_2cur[i] != jSE_2[i])
-          {
-            ++jSE_2cur[i];
-            if (jSE_1[i] == 0)
-            {
-              jSE_1cur[i] = jSE_1[i] + 1;
-            }
-            if (jSE_1cur[i] != jSE_1[i])
-            {
-              ++jSE_1cur[i];
-              ++jPEcur[i];
-              if (jPEcur[i] == jPE[i])
-              {
-                ++jCur[i];
-                jPEcur[i] = 0;
-                digitalWrite(joint_step_pin_[i], LOW);
-                delayMicroseconds(curDelay);
-                digitalWrite(joint_step_pin_[i], HIGH);
+            ++jCur[i];
+            --jStep[i];
+            digitalWrite(joint_step_pin_[i], LOW);
+            delayMicroseconds(curDelay);
+            digitalWrite(joint_step_pin_[i], HIGH);
 
-                long cur = millis();
-                if (cur - pre_ticks_ > 5)
-                {
-                  int pose = cur_pose_[i] + jCur[i] * (jDir[i] == 0 ? -1 : 1);
+            long cur = millis();
+            if (cur - pre_ticks_ > 1)
+            {
+              int pose = cur_pose_[i] + (jDir[i] == 0 ? -jCur[i] : jCur[i]);
 #if MOVEIT
-                  sprintf(pub_data_, "p%d%d", i, pose);
-                  response_string_.data = pub_data_;
-                  pub_.publish(&response_string_);
+              sprintf(pub_data_, "p%d%d", i, pose);
+              response_string_.data = pub_data_;
+              pub_.publish(&response_string_);
 #else
 #ifdef DEBUG
-                  Serial.print("cur ");
-                  Serial.println(jCur[i]);
-                  Serial.println(pose);
+              Serial.print("cur ");
+              Serial.println(jCur[i]);
+              Serial.println(pose);
 #endif
 #endif
-                  pre_ticks_ = cur;
-                }
-              }
-            }
-            else
-            {
-              jSE_1cur[i] = 0;
+              pre_ticks_ = cur;
             }
           }
-          else
-          {
-            jSE_2cur[i] = 0;
-          }
-        }        
-      }
+        }
     }
 
     // increase cur step
-    ++highStepCur;
+    ++curHighStep;
   }
 
   // update current position
@@ -324,9 +254,9 @@ void homing()
         driveMotorsJ(cmd);
         // back to home position
         cmd = "MJ" + String(char(65 + i)) + String(home_dirs_[i]) + String(home_steps_[i]) + 
-          "S" + String(int(home_kinematics_[K_SPEED_IN])) + 
-          "G" + String(int(home_kinematics_[K_ACC_DUR])) + "H" + String(int(home_kinematics_[K_ACC_SPD])) +
-          "I" + String(int(home_kinematics_[K_DCC_DUR])) + "K" + String(int(home_kinematics_[K_DCC_SPD]));
+          "S" + String(home_kinematics_[K_SPEED_IN]) + 
+          "G" + String(home_kinematics_[K_ACC_DUR]) + "H" + String(home_kinematics_[K_ACC_SPD]) +
+          "I" + String(home_kinematics_[K_DCC_DUR]) + "K" + String(home_kinematics_[K_DCC_SPD]);
 
         // rotate towards home position
         driveMotorsJ(cmd);
@@ -391,7 +321,6 @@ void loop()
   }
 
   nh_.spinOnce();
-  delay(1);
 #else
   // for responding python control sw
   while (Serial.available() > 0)
