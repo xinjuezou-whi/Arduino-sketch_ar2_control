@@ -9,6 +9,14 @@ It relies on rosserial library to communicate, so please install such library fr
 ![image](https://user-images.githubusercontent.com/72239958/183248539-b3b5ac4b-b4fa-437d-aa0e-2b6feb40bdda.png)
 
 
+## Wiring
+Please check electrical wiring meets the pin’s definition. Two major parts: the direction and pulse of the stepper driver, and the input of the limit switch.
+```
+const int joint_step_pin_[JOINT_NUM] = { 2, 4, 6, 8, 10, 12 };
+const int joint_dir_pin_[JOINT_NUM] = { 3, 5, 7, 9, 11, 13 };
+const int joint_limit_pin_[JOINT_NUM] = { 22, 23, 24, 25, 26, 27 };
+```
+
 ## Usage
 ## With MoveIt
 First make sure the MOVEIT is defined to 1, then compile and upload
