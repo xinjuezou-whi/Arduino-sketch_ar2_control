@@ -12,7 +12,7 @@ It relies on rosserial library to communicate, so please install such library fr
 ### Potential issue
 ![image](https://user-images.githubusercontent.com/72239958/183331463-e284af73-4694-451c-803e-ae6c8dfe9612.png)
 
-The compile error: "Rosserial_Arduino_Library\src/ros/msg.h:40:10: fatal error: cstring: No such file or directory" might be prompted, if version 0.9.1 is installed, which is still an open issue in this [thread#518](https://github.com/ros-drivers/rosserial/issues/518).
+The compile error: "Rosserial_Arduino_Library\src/ros/msg.h:40:10: fatal error: cstring: No such file or directory" would be prompted, if version 0.9.1 is installed, which is still an open issue in this [thread#518](https://github.com/ros-drivers/rosserial/issues/518).
 
 Degrade the version to 0.7.9 for a temporary solution.
 
