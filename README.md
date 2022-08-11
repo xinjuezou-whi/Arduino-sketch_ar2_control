@@ -2,12 +2,14 @@
 
 This is the motor controller for AR2 arm. Though AR2 has [its Arduino sketch](https://www.anninrobotics.com/downloads) already, it is not designed for ROS MoveIt. Extending the AR2 to MoveIt application for which is this repository aims.
 
-With a thorough refactor, it can catch up with the frequency of the hardware interface by removing many logics that are redundant to MoveIt. Meanwhile, it keeps the “MJ” protocol as exact as before, which enables communication to “AR2.py” as well.
+With a thorough refactor, it can catch up with the frequency of the hardware interface by removing many logics that are redundant to MoveIt and introducing timer-interrupt for bit banging. Meanwhile, it keeps the “MJ” protocol as exact as before, which enables communication to “AR2.py” as well.
 
 ## Prerequisites
-It relies on rosserial library to communicate, so please install such library from library managment of Arduino IDE
+It relies on rosserial library to communicate, so please install such library from library managment of Arduino IDE.
 ![image](https://user-images.githubusercontent.com/72239958/183248539-b3b5ac4b-b4fa-437d-aa0e-2b6feb40bdda.png)
 
+To avoid jerking, the timer-interrupt mechanism was introduced for bit banging, so also please install the library "Timerinterrupt" from Arduino IDE.
+![image](https://user-images.githubusercontent.com/72239958/184104829-264f948c-a46c-43af-b04f-7f41753cb2e9.png)
 
 ### Potential issue
 ![image](https://user-images.githubusercontent.com/72239958/183331463-e284af73-4694-451c-803e-ae6c8dfe9612.png)
@@ -42,4 +44,6 @@ Change the definition of MOVEIT to 0, then compile and upload
 #define MOVEIT 0
 ```
 
-Run the AR2.py. Please note that the Cartesian motion is not implemented so far, only joint movement is valid which means the "Millimeters to Jog" is unfunctional.
+## Limit
+* By running the AR2.py, only the joint movement is valid, which means the "Millimeters to Jog" is unfunctional. Because the Cartesian motion is not implemented so far
+* Due to the max frequency of Timerinterrupt is up to 1KHz, the max angular velocity of each joint is limitted up to 0.16 rad/s or 8.9 degree/s
