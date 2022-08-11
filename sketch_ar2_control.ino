@@ -339,6 +339,11 @@ void loop()
       {
         Serial.println("homing received");
         parseKinematics(recv_string_, home_dirs_, home_steps_, home_kinematics_);
+        // infer the direction of limits
+        for (int i =0; i < JOINT_NUM; ++i)
+        {
+          limits_dir_[i] = (home_dirs_[i] + 1) % 2;
+        }
         homing();
       }
 
