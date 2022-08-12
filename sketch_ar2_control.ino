@@ -127,11 +127,9 @@ void parseMove(const String& Command)
   int jDir[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
   int kinematics[K_SUM] = { 0, 0, 0, 0, 0 };
   parseKinematics(Command, jDir, request_steps_, kinematics);
-#if MOVEIT
-#else
+  // velocity ratio
   int interval = int(100.0 / kinematics[K_SPEED_IN]);
   ITimer1.setInterval(interval, driveJoints);
-#endif
 
   // set the direction
   for (int i = 0; i < JOINT_NUM; ++i)
@@ -144,11 +142,9 @@ void parseMove(const String& Command)
 void parseHome(const String& Command)
 {
   parseKinematics(Command, home_dirs_, home_steps_, home_kinematics_);
-#if MOVEIT
-#else
+  // velocity ratio
   int interval = int(100.0 / home_kinematics_[K_SPEED_IN]);
   ITimer1.setInterval(interval, driveJoints);
-#endif
 
   // infer the direction of limits
   for (int i = 0; i < JOINT_NUM; ++i)
