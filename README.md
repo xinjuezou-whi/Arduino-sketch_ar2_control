@@ -8,8 +8,8 @@ With a thorough refactor, it can catch up with the frequency of the hardware int
 It relies on rosserial library to communicate, so please install such library from library managment of Arduino IDE.
 ![image](https://user-images.githubusercontent.com/72239958/183248539-b3b5ac4b-b4fa-437d-aa0e-2b6feb40bdda.png)
 
-To avoid jerking, the timer-interrupt mechanism was introduced for bit banging, so also please install the library "Timerinterrupt" from Arduino IDE.
-![image](https://user-images.githubusercontent.com/72239958/184104829-264f948c-a46c-43af-b04f-7f41753cb2e9.png)
+To avoid jerking, the timer-interrupt mechanism was introduced for bit banging, so also please install the library "TimerOne" from Arduino IDE.
+![image](https://user-images.githubusercontent.com/72239958/185028082-421d4d3b-a846-4eb2-9238-eaf2ded5698e.png)
 
 ### Potential issue
 ![image](https://user-images.githubusercontent.com/72239958/183331463-e284af73-4694-451c-803e-ae6c8dfe9612.png)
