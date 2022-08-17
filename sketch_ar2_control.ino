@@ -9,7 +9,7 @@ Features:
 
 Dependency:
 - rosserial
-- Timerinterrupt
+- TimerOne
 
 Written by Xinjue Zou, xinjue.zou@outlook.com
 
@@ -20,44 +20,23 @@ Changelog:
 2022-07-09: refactored from version AR2.0
 2022-08-02: added homing mechanism
 2022-08-11: bit banging with timer interrupt mechanism
+2022-08-12: introduce TimerOne to increase the frequency of bit banging
 2022-xx-xx: xxx
 ******************************************************************/
-// These define's must be placed at the beginning before #include "TimerInterrupt.h"
-// _TIMERINTERRUPT_LOGLEVEL_ from 0 to 4
-// Don't define _TIMERINTERRUPT_LOGLEVEL_ > 0. Only for special ISR debugging only. Can hang the system.
-#define TIMER_INTERRUPT_DEBUG         0
-#define _TIMERINTERRUPT_LOGLEVEL_     0
-
-#define USE_TIMER_1     true
-
-#if ( defined(__AVR_ATmega644__) || defined(__AVR_ATmega644A__) || defined(__AVR_ATmega644P__) || defined(__AVR_ATmega644PA__)  || \
-        defined(ARDUINO_AVR_UNO) || defined(ARDUINO_AVR_NANO) || defined(ARDUINO_AVR_MINI) ||    defined(ARDUINO_AVR_ETHERNET) || \
-        defined(ARDUINO_AVR_FIO) || defined(ARDUINO_AVR_BT)   || defined(ARDUINO_AVR_LILYPAD) || defined(ARDUINO_AVR_PRO)      || \
-        defined(ARDUINO_AVR_NG) || defined(ARDUINO_AVR_UNO_WIFI_DEV_ED) || defined(ARDUINO_AVR_DUEMILANOVE) || defined(ARDUINO_AVR_FEATHER328P) || \
-        defined(ARDUINO_AVR_METRO) || defined(ARDUINO_AVR_PROTRINKET5) || defined(ARDUINO_AVR_PROTRINKET3) || defined(ARDUINO_AVR_PROTRINKET5FTDI) || \
-        defined(ARDUINO_AVR_PROTRINKET3FTDI) )
-  #define USE_TIMER_2     true
-  #warning Using Timer1, Timer2
-#else          
-  #define USE_TIMER_3     true
-  #warning Using Timer1, Timer3
-#endif
-
-// To be included only in main(), .ino with setup() to avoid `Multiple Definitions` Linker Error
-#include "TimerInterrupt.h"
-
+#include <TimerOne.h>
 #include <ros.h>
 #include <std_msgs/String.h>
 
 #define MOVEIT 1
+#define SIMULTANEOUS 1
 
-const String VERSION = "01.09";
+const String VERSION = "01.11";
 
 // ROS
 ros::NodeHandle nh_;
 std_msgs::String response_string_;
 ros::Publisher pub_("arm_hardware_response", &response_string_);
-char pub_data_[32] = { 0 };
+char pub_data_[64] = { 0 };
 
 // control variables
 String recv_string_;
@@ -65,18 +44,17 @@ const int JOINT_NUM = 6;
 enum STATE { STA_HOMING_LIMIT = 0, STA_HOMING_WAIT, STA_HOMING_ZERO, STA_SLAVE, STA_STANDBY, STA_UNDEFINED };
 uint8_t pre_state_ = STA_STANDBY;
 uint8_t state_ = STA_STANDBY;
-long pre_ticks_ = 0;
-long last_home_ticks_ = 0;
 bool bit_banging_toggles_[JOINT_NUM] = { true, true, true, true, true, true };
 volatile int request_steps_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
 volatile int moving_dir_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+volatile int durations_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
+int elapses_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
 int homing_index_ = 0;
+unsigned long pre_ticks_ = 0;
 
 // status
 volatile int cur_pose_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
-
-// SPEED // millisecond multiplier // raise value to slow robot speeds // DEFAULT = 200
-const int SPEED_MULTIPLE = 200;
+// kinematics
 enum KINEMATICS { K_SPEED_IN = 0, K_ACC_DUR, K_ACC_SPD, K_DCC_DUR, K_DCC_SPD, K_SUM };
 int home_dirs_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
 int limits_dir_[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
@@ -91,6 +69,7 @@ const int output_pin_53_ = 53;
 
 void parseKinematics(const String& Command, int* Jdir, int* Jstep, int* Kinematics)
 {
+  // move direction
   memset(Jdir, 0, sizeof(int) * JOINT_NUM);
   int jStart[JOINT_NUM];
   for (int i = 0; i < JOINT_NUM; ++i)
@@ -104,7 +83,9 @@ void parseKinematics(const String& Command, int* Jdir, int* Jstep, int* Kinemati
   int asStart = Command.indexOf('H');
   int ddStart = Command.indexOf('I');
   int dsStart = Command.indexOf('K');
+  int lmtStart = Command.indexOf('l');
 
+  // move steps
   memset(Jstep, 0, sizeof(int) * JOINT_NUM);
   for (int i = 0; i < JOINT_NUM; ++i)
   {
@@ -114,22 +95,56 @@ void parseKinematics(const String& Command, int* Jdir, int* Jstep, int* Kinemati
       Jstep[i] = Command.substring(jStart[i] + 2, endPos).toInt();
     }
   }
-  
+
+  // kinematics
   Kinematics[K_SPEED_IN] = Command.substring(spStart + 1, adStart).toInt();
   Kinematics[K_ACC_DUR] = Command.substring(adStart + 1, asStart).toInt();
   Kinematics[K_ACC_SPD] = Command.substring(asStart + 1, ddStart).toInt();
   Kinematics[K_DCC_DUR] = Command.substring(ddStart + 1, dsStart).toInt();
-  Kinematics[K_DCC_SPD] = Command.substring(dsStart + 1).toInt();
+  Kinematics[K_DCC_SPD] = lmtStart < 0 ? Command.substring(dsStart + 1).toInt() : Command.substring(dsStart + 1, lmtStart).toInt();
+
+  // limits direction
+  if (lmtStart >= 0)
+  {
+    for (int i = 0; i < JOINT_NUM; ++i)
+    {
+      limits_dir_[i] = Command.substring(lmtStart + 1 + i, lmtStart + 2 + i).toInt();
+    }
+  }
+}
+
+void updateInterval(int Percent)
+{
+  unsigned long interval = (unsigned long)(25000.0 / Percent);
+  Timer1.setPeriod(interval);
+}
+
+void updateDurations(const int* Jstep)
+{
+  int longest = 0;
+  for (int i = 0; i < JOINT_NUM; ++i)
+  {
+    longest = Jstep[i] > longest ? Jstep[i] : longest;
+  }
+
+  for (int i = 0; i < JOINT_NUM; ++i)
+  {
+    elapses_[i] = 0;
+    durations_[i] = (longest == Jstep[i] || Jstep[i] == 0) ? 1 : (longest - Jstep[i]) / Jstep[i];
+    durations_[i] = durations_[i] == 0 ? 1 : durations_[i];
+  }
 }
 
 void parseMove(const String& Command)
 {
   int jDir[JOINT_NUM] = { 0, 0, 0, 0, 0, 0 };
   int kinematics[K_SUM] = { 0, 0, 0, 0, 0 };
+
+  noInterrupts();
   parseKinematics(Command, jDir, request_steps_, kinematics);
-  // velocity ratio
-  int interval = int(100.0 / kinematics[K_SPEED_IN]);
-  ITimer1.setInterval(interval, driveJoints);
+  updateDurations(request_steps_);
+  updateInterval(kinematics[K_SPEED_IN]);
+  interrupts();
 
   // set the direction
   for (int i = 0; i < JOINT_NUM; ++i)
@@ -141,16 +156,14 @@ void parseMove(const String& Command)
 
 void parseHome(const String& Command)
 {
-  parseKinematics(Command, home_dirs_, home_steps_, home_kinematics_);
-  // velocity ratio
-  int interval = int(100.0 / home_kinematics_[K_SPEED_IN]);
-  ITimer1.setInterval(interval, driveJoints);
-
-  // infer the direction of limits
   for (int i = 0; i < JOINT_NUM; ++i)
   {
-    limits_dir_[i] = (home_dirs_[i] + 1) % 2;
+    elapses_[i] = 0;
+    durations_[i] = 1;
   }
+  parseKinematics(Command, home_dirs_, home_steps_, home_kinematics_);
+  updateInterval(home_kinematics_[K_SPEED_IN]);
+
   // get the index of homing-active joint
   for (int i = 0; i < JOINT_NUM; ++i)
   {
@@ -162,23 +175,44 @@ void parseHome(const String& Command)
   }  
 }
 
+void parseLimitsDirection(const String& Command)
+{
+  int lmtStart = Command.indexOf('t');
+  // limits direction
+  if (lmtStart >= 0)
+  {
+    for (int i = 0; i < JOINT_NUM; ++i)
+    {
+      limits_dir_[i] = Command.substring(lmtStart + 1 + i, lmtStart + 2 + i).toInt();
+    }
+  }
+}
+
 void messageCallback(const std_msgs::String& Msg)
 {
-  digitalWrite(53, HIGH - digitalRead(53)); // blink the led
+  // blink the led to indicate the communication
+  digitalWrite(output_pin_53_, HIGH - digitalRead(output_pin_53_));
 
   String cmd = Msg.data;
-  state_ = cmd.substring(0, 2) == "hm" ? STA_HOMING_LIMIT : STA_SLAVE;
-
-  if (state_ == STA_SLAVE)
+  String key = cmd.substring(0, 2);
+  if (key == "MJ")
   {
     parseMove(cmd);
+    
+    state_ = STA_SLAVE;
   }
-  else if (state_ == STA_HOMING_LIMIT)
+  else if (key == "hm")
   {
     response_string_.data = "homing";
     pub_.publish(&response_string_);
 
     parseHome(cmd);
+    
+    state_ = STA_HOMING_LIMIT;
+  }
+  else if (key == "lt")
+  {
+    parseLimitsDirection(recv_string_);
   }
 }
 
@@ -196,14 +230,22 @@ void driveJoints()
       }
       else
       {
-        digitalWrite(joint_step_pin_[i], bit_banging_toggles_[i]);
-        bit_banging_toggles_[i] = !bit_banging_toggles_[i];
-
-        if (bit_banging_toggles_[i])
+#if SIMULTANEOUS
+        if (elapses_[i] == 0)
         {
-          --request_steps_[i];
-          cur_pose_[i] = moving_dir_[i] == 0 ? cur_pose_[i] - 1 : cur_pose_[i] + 1;
+#endif
+          digitalWrite(joint_step_pin_[i], bit_banging_toggles_[i]);
+          bit_banging_toggles_[i] = !bit_banging_toggles_[i];
+
+          if (bit_banging_toggles_[i])
+          {
+            --request_steps_[i];
+            cur_pose_[i] = moving_dir_[i] == 0 ? cur_pose_[i] - 1 : cur_pose_[i] + 1;
+          }
+#if SIMULTANEOUS
         }
+        elapses_[i] = (elapses_[i] + 1) % durations_[i];
+#endif
       }
     }
   }
@@ -211,16 +253,22 @@ void driveJoints()
 
 void jointPoses()
 {
+  pub_data_[0] = 'p';
+  pub_data_[1] = 0;
+  noInterrupts();
   for (int i = 0; i < JOINT_NUM; ++i)
   {
-#if MOVEIT
-    sprintf(pub_data_, "p%d%d", i, cur_pose_[i]);
-    response_string_.data = pub_data_;
-    pub_.publish(&response_string_);
-#else
-    Serial.println(String(i) + String(" ") + String(cur_pose_[i]));
-#endif
+    strcat(pub_data_, String(cur_pose_[i]).c_str());
+    strcat(pub_data_, "p");
   }
+  interrupts();
+
+#if MOVEIT
+  response_string_.data = pub_data_;
+  pub_.publish(&response_string_);
+#else
+  Serial.println(pub_data_);
+#endif
 }
 
 void setup()
@@ -246,29 +294,22 @@ void setup()
   }
   pinMode(output_pin_53_, OUTPUT); // LED checking
 
-  ITimer1.init();
-  if (ITimer1.attachInterruptInterval(1, driveJoints))
-  {
-    Serial.print(F("Starting  ITimer1 OK, millis() = ")); Serial.println(millis());
-  }
-  else
-  {
-    Serial.println(F("Can't set ITimer1. Select another freq. or timer"));
-  }
-  
-  ITimer3.init();
-  if (ITimer3.attachInterruptInterval(20, jointPoses))
-  {
-    Serial.print(F("Starting  ITimer3 OK, millis() = ")); Serial.println(millis());
-  }
-  else
-  {
-    Serial.println(F("Can't set ITimer3. Select another freq. or timer"));
-  }
+  Timer1.initialize(1000); // default 1ms
+  Timer1.attachInterrupt(driveJoints);
 }
 
 void loop()
 {
+  // report the position of joints
+  auto curTicks = millis();
+  if (curTicks - pre_ticks_ > 20) // default 20ms
+  {
+    jointPoses();
+    
+    pre_ticks_ = curTicks;
+  }
+
+  // state machine
   switch (state_)
   {
   case STA_HOMING_LIMIT:
@@ -288,27 +329,32 @@ void loop()
     }
     break;
   case STA_HOMING_WAIT:
-    if (request_steps_[homing_index_] == 0)
     {
-      if (pre_state_ == STA_HOMING_LIMIT)
+      noInterrupts();
+      auto steps = request_steps_[homing_index_];
+      interrupts();
+      if (steps == 0)
       {
-        state_ = STA_HOMING_ZERO;
-      }
-      else if (pre_state_ == STA_HOMING_ZERO)
-      {
-        cur_pose_[homing_index_] = home_steps_[homing_index_] == 0 ? cur_pose_[homing_index_] : 0;
-        
-        if (++homing_index_ == JOINT_NUM)
+        if (pre_state_ == STA_HOMING_LIMIT)
         {
-          state_ = STA_STANDBY;
-#if MOVEIT
-          response_string_.data = "homed";
-          pub_.publish(&response_string_);
-#endif
+          state_ = STA_HOMING_ZERO;
         }
-        else
+        else if (pre_state_ == STA_HOMING_ZERO)
         {
-          state_ = STA_HOMING_LIMIT;
+          cur_pose_[homing_index_] = home_steps_[homing_index_] == 0 ? cur_pose_[homing_index_] : 0;
+        
+          if (++homing_index_ == JOINT_NUM)
+          {
+            state_ = STA_STANDBY;
+#if MOVEIT
+            response_string_.data = "homed";
+            pub_.publish(&response_string_);
+#endif
+          }
+          else
+          {
+            state_ = STA_HOMING_LIMIT;
+          }
         }
       }
     }
@@ -323,8 +369,7 @@ void loop()
     state_ = STA_HOMING_WAIT;
     break;
   default:
-#if MOVEIT
-#else
+#if !MOVEIT
     // for responding python control sw
     while (Serial.available() > 0)
     {
@@ -345,6 +390,11 @@ void loop()
           
           state_ = STA_HOMING_LIMIT;
         }
+        else if (function == "lt")
+        {
+          Serial.println("limits received");
+          parseLimitsDirection(recv_string_);
+        }
 
         recv_string_ = ""; // clear recieved buffer
       }
@@ -354,6 +404,7 @@ void loop()
   }
 
 #if MOVEIT
+  // ROS spinner
   nh_.spinOnce();
 #endif
 }
