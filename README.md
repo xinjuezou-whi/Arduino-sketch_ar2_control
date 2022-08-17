@@ -46,4 +46,4 @@ Change the definition of MOVEIT to 0, then compile and upload
 
 ## Limit
 * By running the AR2.py, only the joint movement is valid, which means the "Millimeters to Jog" is unfunctional. Because the Cartesian motion is not implemented so far
-* Due to the max frequency of Timerinterrupt is up to 1KHz, the max angular velocity of each joint is limitted up to 0.16 rad/s or 8.9 degree/s
+* There will be obvious jerk if the frequency is up to 1.6+KHz, that is 30+ of speed ratio
