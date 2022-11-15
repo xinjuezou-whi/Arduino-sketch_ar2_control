@@ -255,6 +255,9 @@ void jointPoses()
 {
   pub_data_[0] = 'p';
   pub_data_[1] = 0;
+  // to read a variable which the interrupt code writes,
+  // we must temporarily disable interrupts, to be sure it will not change while we are reading
+  // to minimize the time with interrupts off, just quickly make a copy
   noInterrupts();
   for (int i = 0; i < JOINT_NUM; ++i)
   {
