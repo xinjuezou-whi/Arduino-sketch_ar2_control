@@ -226,6 +226,7 @@ void driveJoints()
     {
       if (moving_dir_[i] == limits_dir_[i] && digitalRead(joint_limit_pin_[i]) == LOW)
       {
+        // limit switch triggered
         request_steps_[i] = 0;
       }
       else
